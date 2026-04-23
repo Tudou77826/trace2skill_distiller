@@ -19,7 +19,9 @@ from ..pipeline import run_pipeline, run_batch
 from ..engine.distill import distill_all_dimensions
 from ..engine.merge import merge_and_write, save_trajectories
 
-console = Console()
+import sys
+_console_file = open(sys.stderr.fileno(), mode='w', encoding='utf-8', errors='replace', closefd=False)
+console = Console(file=_console_file)
 
 
 def _load_config() -> DistillConfig:

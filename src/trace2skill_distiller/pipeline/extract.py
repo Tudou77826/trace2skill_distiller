@@ -82,7 +82,7 @@ def detect_intent_boundaries(
         BOUNDARY_SYSTEM,
         BOUNDARY_PROMPT.format(anchors=anchors_text),
         temperature=0.2,
-        max_tokens=2048,
+        max_tokens=4096,
         json_retries=1,
     )
 

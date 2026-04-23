@@ -16,7 +16,9 @@ from .extract import (
     aggregate_session_summary,
 )
 
-console = Console()
+import sys
+_console_file = open(sys.stderr.fileno(), mode='w', encoding='utf-8', errors='replace', closefd=False)
+console = Console(file=_console_file)
 
 
 def run_pipeline(
