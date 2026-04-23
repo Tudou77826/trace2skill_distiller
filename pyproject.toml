@@ -1,0 +1,24 @@
+[project]
+name = "trace2skill-distiller"
+version = "0.1.0"
+description = "Distill reusable skills from OpenCode session traces via LLM"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.3.3",
+    "openai>=2.32.0",
+    "pydantic>=2.13.3",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
+    "schedule>=1.2.2",
+]
+
+[project.scripts]
+trace2skill = "trace2skill_distiller.cli.main:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trace2skill_distiller"]
