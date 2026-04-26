@@ -8,28 +8,32 @@ from datetime import datetime
 from pathlib import Path
 
 from ..llm import LLMClient
-from ..models import TopicSkill, SkillRule
+from ..models import TopicSkill
 
 
-MERGE_SYSTEM = """你是一个 Skill 仓库管理员，负责将新蒸馏的规则合并到已有的技能文件中。
-直接输出合并后的完整 Markdown 内容（包含 YAML frontmatter）。"""
+MERGE_SYSTEM = """你是一个 Skill 仓库管理员，负责将新蒸馏的内容合并到已有的技能文件中。
+直接输出合并后的完整 Markdown 正文（不含 YAML frontmatter）。"""
 
-MERGE_PROMPT = """## 当前技能文件内容
-{current_content}
+MERGE_PROMPT = """## 当前技能正文
+{current_body}
 
-## 待合并的新规则
-{new_rules_json}
+## 待合并的新内容
+{new_body}
 
 ## 合并规则
-1. **去重**: 语义相同的规则只保留一条，保留 confidence 最高的版本
-2. **冲突检测**: 如果新旧规则矛盾，保留 confidence 更高的
-3. **优先级排序**: ALWAYS > WHEN_THEN > NEVER > AVOID
-4. **数量控制**: 最多保留 {max_rules} 条规则
-5. **保持格式**: 输出格式与原文件一致（包含 YAML frontmatter）
-6. **更新 description**: 如果新规则扩展了技能的适用范围，更新 frontmatter 中的 description
+1. **去重**: 语义相同的内容只保留一条
+2. **冲突检测**: 如果新旧内容矛盾，保留更新、更详细的版本
+3. **保持格式**: 保持原有的 Markdown 格式风格（标题层级、列表等）
+4. **保留 skill_type 格式**: 不要改变技能类型对应的格式结构
+5. **更新 description**: 如果新内容扩展了技能的适用范围，输出新的 description
+6. **精简**: 合并后去掉冗余内容，保持精炼
 
 ## 输出
-直接输出完整的 Markdown 文件内容（从 --- 开始），不要省略任何部分。"""
+严格输出 JSON：
+{{
+  "description": "English description with trigger words (max 200 chars)",
+  "body": "合并后的完整 Markdown 正文（不含 YAML frontmatter）"
+}}"""
 
 
 def write_topic_skill(
@@ -56,26 +60,38 @@ def merge_topic_skill(
 ) -> Path:
     """Merge new distillation results into an existing SKILL.md file."""
     current_content = existing_path.read_text(encoding="utf-8")
+    current_body = _extract_body(current_content)
 
-    rules_data = [r.model_dump() for r in new_result.rules]
-    new_rules_json = json.dumps(rules_data, ensure_ascii=False, indent=2)
+    new_body = new_result.body or ""
+    if len(new_body) > 8000:
+        new_body = new_body[:8000] + "\n...[truncated]"
 
-    # Truncate if too long
-    if len(new_rules_json) > 6000:
-        new_rules_json = new_rules_json[:6000] + "\n...[truncated]"
-
-    merged = fast_llm.chat(
+    merged = fast_llm.chat_json_with_retry(
         MERGE_SYSTEM,
         MERGE_PROMPT.format(
-            current_content=current_content,
-            new_rules_json=new_rules_json,
-            max_rules=max_rules,
+            current_body=current_body,
+            new_body=new_body,
         ),
         temperature=0.2,
-        max_tokens=4096,
+        max_tokens=8192,
     )
 
-    existing_path.write_text(merged, encoding="utf-8")
+    merged_body = merged.get("body", current_body)
+    merged_description = merged.get("description", new_result.description)
+
+    # Rebuild with updated description
+    temp_skill = TopicSkill(
+        topic_id=new_result.topic_id,
+        topic_name=new_result.topic_name,
+        skill_title=new_result.skill_title,
+        skill_type=new_result.skill_type,
+        description=merged_description,
+        summary=new_result.summary,
+        body=merged_body,
+        source_sessions=new_result.source_sessions,
+    )
+
+    existing_path.write_text(_format_skill_markdown(temp_skill), encoding="utf-8")
     return existing_path
 
 
@@ -119,6 +135,7 @@ def write_index(
         lines.append("")
         lines.append(f"{skill.description}")
         lines.append("")
+        lines.append(f"- 类型: {skill.skill_type}")
         lines.append(f"- 规则数: {rule_count}")
         lines.append(f"- 来源会话: {len(skill.source_sessions)} 个")
         lines.append("")
@@ -142,18 +159,11 @@ def _sanitize_name(name: str) -> str:
 
 def _format_skill_markdown(result: TopicSkill) -> str:
     """Format a TopicSkill as a Claude Code SKILL.md with YAML frontmatter."""
-    today = datetime.now().strftime("%Y-%m-%d")
     skill_name = _sanitize_name(result.topic_id)
     description = (result.description or result.summary or result.skill_title)[:1024]
+    body = result.body or result.summary or ""
 
-    # Build the "必须遵循" section — always rules
-    always_rules = [r for r in result.rules if r.type == "ALWAYS"]
-    when_then_rules = [r for r in result.rules if r.type == "WHEN_THEN"]
-    never_rules = [r for r in result.rules if r.type == "NEVER"]
-    avoid_rules = [r for r in result.rules if r.type == "AVOID"]
-
-    # YAML frontmatter
-    lines = [
+    return "\n".join([
         "---",
         f"name: {skill_name}",
         f"description: {description}",
@@ -161,56 +171,18 @@ def _format_skill_markdown(result: TopicSkill) -> str:
         "",
         f"# {result.skill_title}",
         "",
-        result.summary,
-        "",
-    ]
-
-    # Source metadata
-    lines.extend([
-        "## 来源",
-        "",
-        f"- 主题: {result.topic_name}",
-        f"- 分析会话: {len(result.source_sessions)} 个",
-        f"- 更新时间: {today}",
-        "",
+        body,
     ])
 
-    # ALWAYS section
-    if always_rules:
-        lines.append("## 必须遵循")
-        lines.append("")
-        for r in always_rules:
-            lines.append(f"- **ALWAYS**: {r.action}")
-            if r.evidence_from_success:
-                lines.append(f"  - 证据: {r.evidence_from_success[0][:80]}")
-        lines.append("")
 
-    # WHEN/THEN section
-    if when_then_rules:
-        lines.append("## 条件规则")
-        lines.append("")
-        for r in when_then_rules:
-            lines.append(f"- **WHEN** {r.condition} **THEN** {r.action}")
-        lines.append("")
-
-    # Lessons learned section
-    if never_rules or avoid_rules:
-        lines.append("## 经验教训")
-        lines.append("")
-        for r in never_rules:
-            lines.append(f"- **NEVER**: {r.action}")
-            if r.evidence_from_failure:
-                lines.append(f"  - 教训: {r.evidence_from_failure[0][:80]}")
-        for r in avoid_rules:
-            lines.append(f"- **AVOID**: {r.action}")
-        lines.append("")
-
-    # Changelog
-    lines.append("## 变更记录")
-    lines.append("")
-    lines.append(f"- {today}: 初始创建，从 {len(result.source_sessions)} 个会话中提炼")
-
-    return "\n".join(lines)
+def _extract_body(content: str) -> str:
+    """Extract Markdown body from a SKILL.md file (strip YAML frontmatter and title)."""
+    import re
+    # Strip YAML frontmatter
+    body = re.sub(r"^---\n.*?\n---\n*", "", content, flags=re.DOTALL)
+    # Strip first H1 title
+    body = re.sub(r"^#\s+.+\n*", "", body)
+    return body.strip()
 
 
 def save_trajectories(

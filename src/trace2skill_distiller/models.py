@@ -284,9 +284,11 @@ class TopicSkill(BaseModel):
     topic_id: str
     topic_name: str
     skill_title: str       # "JWT 认证配置技能"
-    description: str       # Auto-discovery description for Claude Code (what + when)
+    skill_type: str = "checklist"  # procedure | knowledge | checklist | troubleshooting | reference
+    description: str       # English, specific, with trigger words (for AI auto-discovery)
     summary: str           # 一段概述
     rules: list[SkillRule] = Field(default_factory=list)
+    body: str = ""         # LLM-generated Markdown body (format determined by skill_type)
     source_sessions: list[str] = Field(default_factory=list)
 
 
