@@ -270,31 +270,42 @@ def _compute_label(
     if cleaned.has_patches:
         signals.append(("has_patch", 1.0))
 
+    # Signal: exploration with substantial tool usage (no patch but actively gathered info)
+    if not cleaned.has_patches and cleaned.tool_count >= 5:
+        signals.append(("exploration_rich", 0.8))
+
     # Signal: last assistant finished cleanly
     if cleaned.last_finish == "stop":
         signals.append(("clean_stop", 0.7))
 
-    # Signal: errors present
-    if cleaned.has_errors:
-        signals.append(("has_error", -1.0))
+    # Signal: errors present (softened — errors in exploration are normal)
+    if cleaned.has_errors and not cleaned.has_patches:
+        signals.append(("has_error_exploration", -0.3))
+    elif cleaned.has_errors:
+        signals.append(("has_error", -0.8))
 
     # Signal: LLM-assessed outcome
     outcome = llm_result.get("overall_outcome", "")
     if outcome == "success":
         signals.append(("llm_success", 0.5))
     elif outcome == "failure":
-        signals.append(("llm_failure", -0.5))
+        signals.append(("llm_failure", -0.3))
 
     # Signal: lessons learned (indicates learning value)
     lessons = llm_result.get("lessons_learned", [])
     if lessons:
         signals.append(("has_lessons", 0.3))
 
+    # Signal: key decisions recorded (valuable insights extracted)
+    decisions = llm_result.get("key_decisions", [])
+    if decisions:
+        signals.append(("has_decisions", 0.4))
+
     score = sum(w for _, w in signals)
 
-    if score >= 0.8:
+    if score >= 0.7:
         return "success", score
-    elif score >= 0.3:
+    elif score >= 0.2:
         return "partial", score
     else:
         return "failure", score

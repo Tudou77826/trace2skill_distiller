@@ -260,10 +260,40 @@ class SkillRule(BaseModel):
 
 
 class SkillPatch(BaseModel):
+    """Deprecated: kept for backward compatibility."""
     dimension: str = ""
     project: str = ""
     rules: list[SkillRule] = Field(default_factory=list)
     deprecated_rules: list[dict[str, str]] = Field(default_factory=list)
+
+
+# ── Topic-based distillation ──
+
+
+class TopicCluster(BaseModel):
+    """A group of trajectories that share a common topic."""
+    topic_id: str          # slug: "jwt-auth"
+    topic_name: str        # "JWT 认证配置"
+    topic_summary: str     # 1-2 句描述
+    session_ids: list[str] = Field(default_factory=list)
+    primary_project: str = ""
+
+
+class TopicSkill(BaseModel):
+    """Output of distilling a single topic cluster."""
+    topic_id: str
+    topic_name: str
+    skill_title: str       # "JWT 认证配置技能"
+    description: str       # Auto-discovery description for Claude Code (what + when)
+    summary: str           # 一段概述
+    rules: list[SkillRule] = Field(default_factory=list)
+    source_sessions: list[str] = Field(default_factory=list)
+
+
+class ClusteringResult(BaseModel):
+    """Output of the topic clustering step."""
+    clusters: list[TopicCluster] = Field(default_factory=list)
+    unclustered: list[str] = Field(default_factory=list)
 
 
 class RunState(BaseModel):
@@ -274,3 +304,76 @@ class RunState(BaseModel):
     processed_sessions: list[str] = Field(default_factory=list)
     cost_accumulated: float = 0.0
     stats: dict[str, int] = Field(default_factory=dict)
+
+
+# ── Report ──
+
+
+class SessionEntry(BaseModel):
+    """A single session in the report."""
+    session_id: str
+    title: str = ""
+    project: str = ""
+    msg_count: int = 0
+    tool_count: int = 0
+    label: str = ""           # success | partial | failure | skipped
+    label_score: float = 0.0
+    intent: str = ""
+    problems_count: int = 0
+    lessons_count: int = 0
+    label_reason: str = ""    # brief reason for non-success label
+
+
+class TopicEntry(BaseModel):
+    """A topic cluster in the report."""
+    topic_id: str
+    topic_name: str
+    topic_summary: str = ""
+    session_count: int = 0
+    session_ids: list[str] = Field(default_factory=list)
+    rule_count: int = 0
+    skill_title: str = ""
+    description: str = ""
+    rules: list[SkillRule] = Field(default_factory=list)
+    output_path: str = ""
+
+
+class StepTiming(BaseModel):
+    """Timing for a pipeline step."""
+    name: str
+    start: str = ""
+    end: str = ""
+    duration_seconds: float = 0.0
+
+
+class LLMUsage(BaseModel):
+    """LLM API usage stats."""
+    label: str          # "fast" or "strong"
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+class DistillReport(BaseModel):
+    """Full report of a distillation run."""
+    run_id: str = ""
+    project: str = ""
+    started_at: str = ""
+    finished_at: str = ""
+    total_duration_seconds: float = 0.0
+
+    sessions_total: int = 0
+    sessions_passed_filter: int = 0
+    sessions: list[SessionEntry] = Field(default_factory=list)
+
+    topics_found: int = 0
+    unclustered_count: int = 0
+    topics: list[TopicEntry] = Field(default_factory=list)
+
+    total_rules: int = 0
+
+    steps: list[StepTiming] = Field(default_factory=list)
+    llm_usage: list[LLMUsage] = Field(default_factory=list)
+
+    errors: list[str] = Field(default_factory=list)
+    output_dir: str = ""

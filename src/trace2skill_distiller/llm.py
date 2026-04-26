@@ -44,6 +44,9 @@ class LLMClient:
         self.total_input_tokens = 0
         self.total_output_tokens = 0
         self.call_count = 0
+        # Build proxy dict: empty string = no proxy
+        proxy_arg: str | None = config.proxy or None
+
         self._client = httpx.Client(
             headers={
                 "Authorization": f"Bearer {config.api_key}",
@@ -51,6 +54,8 @@ class LLMClient:
                 "User-Agent": "curl/8.0",
             },
             timeout=httpx.Timeout(120.0, connect=10.0),
+            verify=config.verify_ssl,
+            proxy=proxy_arg,
         )
 
     def chat(

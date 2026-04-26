@@ -16,6 +16,8 @@ class ModelConfig(BaseModel):
     max_tokens: int = 4096
     api_key: str = ""
     base_url: str = ""
+    verify_ssl: bool = False
+    proxy: str = ""  # empty = no proxy
 
 
 class OpenCodeConfig(BaseModel):
@@ -50,6 +52,9 @@ class DistillConfig(BaseModel):
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     skill_output_dir: str = "~/.trace2skill/skills"
     max_rules_per_skill: int = 15
+    clustering_min_size: int = 1
+    clustering_max_topics: int = 8
+    protected_topics: list[str] = Field(default_factory=list)
 
     @staticmethod
     def default_config_path() -> Path:
@@ -74,17 +79,24 @@ class DistillConfig(BaseModel):
         fast = models.get("fast", {})
         strong = models.get("strong", {})
 
+        env_verify_ssl = os.getenv("TRACE2SKILL_VERIFY_SSL")
+        env_proxy = os.getenv("TRACE2SKILL_PROXY")
+
         fast_model = ModelConfig(
             api_key=env_key or fast.get("api_key", ""),
             base_url=env_url or fast.get("base_url", ""),
             model=env_fast or fast.get("model", "openai/gpt-oss-120b"),
             max_tokens=fast.get("max_tokens", 4096),
+            verify_ssl=fast.get("verify_ssl", env_verify_ssl != "true" if env_verify_ssl else False),
+            proxy=env_proxy or fast.get("proxy", ""),
         )
         strong_model = ModelConfig(
             api_key=env_key or strong.get("api_key", fast_model.api_key),
             base_url=env_url or strong.get("base_url", fast_model.base_url),
             model=env_strong or strong.get("model", "openai/gpt-oss-120b"),
             max_tokens=strong.get("max_tokens", 8192),
+            verify_ssl=strong.get("verify_ssl", fast_model.verify_ssl),
+            proxy=strong.get("proxy", fast_model.proxy),
         )
 
         oc = raw.get("opencode", {})
@@ -99,6 +111,9 @@ class DistillConfig(BaseModel):
             scheduler=SchedulerConfig(**sched),
             skill_output_dir=raw.get("skill_output_dir", "~/.trace2skill/skills"),
             max_rules_per_skill=raw.get("max_rules_per_skill", 15),
+            clustering_min_size=raw.get("clustering_min_size", 1),
+            clustering_max_topics=raw.get("clustering_max_topics", 8),
+            protected_topics=raw.get("protected_topics", []),
         )
 
 
