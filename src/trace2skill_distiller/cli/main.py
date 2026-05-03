@@ -1,33 +1,26 @@
-"""Trace2Skill Distiller CLI."""
+"""Trace2Skill Distiller CLI — thin shell delegating to orchestrator."""
 
 from __future__ import annotations
 
 import json
 import sys
 import time
-import uuid
 from datetime import datetime
 from pathlib import Path
 
 import click
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 
-from ..config import DistillConfig, init_default_config
+from ..core.config import DistillConfig, init_default_config
 from ..llm import LLMClient
-from ..db import list_sessions, count_tools, export_session
-from ..pipeline import run_pipeline, run_batch
-from ..engine.cluster import cluster_by_topic
-from ..engine.distill import distill_all_topics
-from ..engine.merge import write_or_merge_topic, write_index, save_trajectories
-from ..engine.report import generate_report
-from ..models import (
-    DistillReport, SessionEntry, TopicEntry, StepTiming, LLMUsage,
-)
+from ..llm.providers.openai_compatible import OpenAICompatibleProvider
+from ..mining.mining_facade import DefaultMiningLayer
+from ..mining.sources.opencode import OpenCodeSource
+from ..orchestrator.pipeline import DistillPipeline
 
-import sys
-_console_file = open(sys.stderr.fileno(), mode='w', encoding='utf-8', errors='replace', closefd=False)
+import sys as _sys
+_console_file = open(_sys.stderr.fileno(), mode='w', encoding='utf-8', errors='replace', closefd=False)
 console = Console(file=_console_file)
 
 
@@ -41,14 +34,6 @@ def _load_config() -> DistillConfig:
                 import os
                 os.environ[key.strip()] = val.strip()
     return DistillConfig.load()
-
-
-def _make_fast_llm(config: DistillConfig) -> LLMClient:
-    return LLMClient(config.fast_model)
-
-
-def _make_strong_llm(config: DistillConfig) -> LLMClient:
-    return LLMClient(config.strong_model)
 
 
 @click.group()
@@ -131,258 +116,24 @@ def distill(
       步骤 3  写入     — 每个主题生成独立的 .md 技能文件
 
     使用 --step 可提前终止，--dry-run 可预览而不写入。
-    会话需满足质量阈值（config 中 min_messages、min_tools）才会被处理。
     """
     config = _load_config()
-    fast_llm = _make_fast_llm(config)
-    strong_llm = _make_strong_llm(config)
+    pipeline = DistillPipeline.from_config(config)
 
-    # Initialize report
-    run_id = uuid.uuid4().hex[:8]
-    project_name = project or "general"
-    report = DistillReport(
-        run_id=run_id,
-        project=project_name,
-        started_at=datetime.now().isoformat(),
-    )
-    run_start = time.monotonic()
-
-    console.print(Panel(
-        f"[bold]Trace2Skill Distiller v0.1[/]",
-        subtitle=f"Project: {project or 'all'} | Run: {run_id}",
-    ))
-
-    # Get sessions
+    # Handle incremental
     since_ts = None
     if incremental:
-        state_file = Path.home() / ".trace2skill" / "state.json"
-        if state_file.exists():
-            state = json.loads(state_file.read_text(encoding="utf-8"))
-            last = state.get("last_run", "")
-            if last:
-                dt = datetime.fromisoformat(last)
-                since_ts = int(dt.timestamp() * 1000)
+        from ..output.state import StateManager
+        state_mgr = StateManager()
+        since_ts = state_mgr.get_last_run_ts()
 
-    if session_id:
-        sessions_meta = [{"id": session_id, "title": "specified session", "msg_count": 999}]
-    else:
-        sessions_meta = list_sessions(config, project=project, since=since_ts)
-
-    if not sessions_meta:
-        console.print("[yellow]No sessions found.[/]")
-        return
-
-    report.sessions_total = len(sessions_meta)
-
-    # Display candidates
-    table = Table(title="Session Candidates")
-    table.add_column("#", width=3)
-    table.add_column("Session ID", width=20)
-    table.add_column("Title", width=40)
-    table.add_column("Msgs", width=5)
-    table.add_column("Tools", width=5)
-
-    # Pre-filter with tool counts
-    candidates = []
-    for s in sessions_meta:
-        tc = count_tools(s["id"], config) if not session_id else 0
-        mc = s.get("msg_count", 0)
-        if mc >= config.filter.min_messages and (session_id or tc >= config.filter.min_tools):
-            candidates.append(s)
-            table.add_row(
-                str(len(candidates)),
-                s["id"][:20],
-                (s.get("title") or "")[:40],
-                str(mc),
-                str(tc),
-            )
-
-    console.print(table)
-    console.print(f"\n[green]{len(candidates)}[/] sessions pass quality threshold "
-                  f"(out of {len(sessions_meta)} total)")
-
-    report.sessions_passed_filter = len(candidates)
-
-    if not candidates:
-        console.print("[yellow]No suitable sessions for distillation.[/]")
-        _finalize_report(report, run_start, fast_llm, strong_llm, config, project_name)
-        return
-
-    # Step 1: Preprocessing pipeline
-    console.print("\n[bold]Step 1: Preprocessing (Level 0 → 1 → 2)...[/]")
-    step_start = time.monotonic()
-    trajectories = run_batch(
-        [s["id"] for s in candidates],
-        fast_llm,
-        config,
+    pipeline.run(
+        project=project,
+        session_id=session_id,
+        since=since_ts,
+        step=step,
+        dry_run=dry_run,
     )
-    report.steps.append(StepTiming(
-        name="Preprocessing (L0→L1→L2)",
-        start=datetime.now().isoformat(),
-        duration_seconds=time.monotonic() - step_start,
-    ))
-
-    # Collect session entries for report
-    for t in trajectories:
-        # Build brief reason for non-success sessions
-        reason = ""
-        if t.label != "success":
-            parts = []
-            if t.problems_encountered:
-                first_problem = t.problems_encountered[0].problem
-                parts.append(first_problem[:80])
-            if t.lessons_learned:
-                parts.append(t.lessons_learned[0][:80])
-            reason = "；".join(parts) if parts else "综合评分不足"
-        report.sessions.append(SessionEntry(
-            session_id=t.session_id,
-            project=t.project,
-            label=t.label,
-            label_score=t.label_score,
-            intent=t.intent,
-            msg_count=sum(1 for s in candidates if s["id"] == t.session_id),
-            problems_count=len(t.problems_encountered),
-            lessons_count=len(t.lessons_learned),
-            label_reason=reason,
-        ))
-
-    console.print(
-        f"\nPreprocessing complete: "
-        f"T+={sum(1 for t in trajectories if t.label == 'success')} "
-        f"T±={sum(1 for t in trajectories if t.label == 'partial')} "
-        f"T-={sum(1 for t in trajectories if t.label == 'failure')}"
-    )
-
-    if not trajectories:
-        console.print("[yellow]No trajectories passed preprocessing.[/]")
-        _finalize_report(report, run_start, fast_llm, strong_llm, config, project_name)
-        return
-
-    if step == 1:
-        output_dir = Path(config.skill_output_dir).expanduser()
-        path = save_trajectories(trajectories, output_dir, project or "all")
-        console.print(f"Trajectories saved to: {path}")
-        _finalize_report(report, run_start, fast_llm, strong_llm, config, project_name)
-        return
-
-    # Step 1.5: Topic clustering
-    console.print("\n[bold]Step 1.5: Clustering trajectories by topic...[/]")
-    step_start = time.monotonic()
-    output_dir = Path(config.skill_output_dir).expanduser()
-
-    clustering = cluster_by_topic(
-        trajectories,
-        fast_llm,
-        min_size=config.clustering_min_size,
-        max_topics=config.clustering_max_topics,
-        output_dir=output_dir,
-        project=project_name,
-        protected_topics=config.protected_topics or None,
-    )
-    report.steps.append(StepTiming(
-        name="Topic Clustering",
-        duration_seconds=time.monotonic() - step_start,
-    ))
-    report.topics_found = len(clustering.clusters)
-    report.unclustered_count = len(clustering.unclustered)
-
-    console.print(f"  Clustered into [green]{len(clustering.clusters)}[/] topics "
-                  f"({len(clustering.unclustered)} unclustered)")
-    for c in clustering.clusters:
-        console.print(f"    - {c.topic_name} ({len(c.session_ids)} sessions)")
-
-    # Step 2: Per-topic distillation
-    console.print("\n[bold]Step 2: Distilling skill rules per topic...[/]")
-    step_start = time.monotonic()
-    skills = distill_all_topics(
-        trajectories,
-        clustering.clusters,
-        strong_llm,
-    )
-    report.steps.append(StepTiming(
-        name="Per-Topic Distillation",
-        duration_seconds=time.monotonic() - step_start,
-    ))
-
-    total_rules = sum(len(s.rules) for s in skills)
-    report.total_rules = total_rules
-    console.print(f"\nDistilled {total_rules} rules across {len(skills)} topic skills")
-
-    if not skills:
-        console.print("[yellow]No rules distilled.[/]")
-        _finalize_report(report, run_start, fast_llm, strong_llm, config, project_name)
-        return
-
-    # Collect topic entries for report
-    for s in skills:
-        report.topics.append(TopicEntry(
-            topic_id=s.topic_id,
-            topic_name=s.topic_name,
-            topic_summary=s.summary,
-            session_count=len(s.source_sessions),
-            session_ids=s.source_sessions,
-            rule_count=len(s.rules),
-            skill_title=s.skill_title,
-            description=s.description,
-            rules=s.rules,
-        ))
-
-    if step == 2 or dry_run:
-        for s in skills:
-            console.print(f"\n[bold]Topic: {s.skill_title}[/] ({len(s.rules)} rules)")
-            console.print(f"  {s.summary}")
-            for r in s.rules:
-                console.print(f"  [{r.type}] {r.action} (confidence: {r.confidence:.2f})")
-        _finalize_report(report, run_start, fast_llm, strong_llm, config, project_name)
-        return
-
-    # Step 3: Write per-topic skill files
-    console.print("\n[bold]Step 3: Writing topic skill files...[/]")
-    step_start = time.monotonic()
-    written_paths = []
-    for skill in skills:
-        path = write_or_merge_topic(
-            skill,
-            output_dir,
-            project_name,
-            fast_llm=fast_llm,
-            max_rules=config.max_rules_per_skill,
-        )
-        written_paths.append(path)
-        console.print(f"  Written: {path}")
-        # Update report with output path
-        for t in report.topics:
-            if t.topic_id == skill.topic_id:
-                t.output_path = str(path)
-
-    report.steps.append(StepTiming(
-        name="Write SKILL.md Files",
-        duration_seconds=time.monotonic() - step_start,
-    ))
-
-    # Write index
-    index_path = write_index(skills, output_dir, project_name)
-    console.print(f"  Index: {index_path}")
-
-    # Save trajectories
-    save_trajectories(trajectories, output_dir, project_name)
-
-    # Update state
-    _save_state(trajectories, project)
-
-    console.print(Panel(
-        f"Sessions analyzed: {len(trajectories)} "
-        f"(T+={sum(1 for t in trajectories if t.label == 'success')}, "
-        f"T-={sum(1 for t in trajectories if t.label != 'success')})\n"
-        f"Topics discovered: {len(clustering.clusters)}\n"
-        f"Skills written: {len(written_paths)}\n"
-        f"Total rules: {total_rules}\n"
-        f"Output dir: {output_dir / project_name}/",
-        title="Distillation Complete",
-    ))
-
-    # Finalize report
-    _finalize_report(report, run_start, fast_llm, strong_llm, config, project_name)
 
 
 # ── inspect ──
@@ -401,12 +152,16 @@ def inspect(session_id: str):
       $ trace2skill inspect abc123-def456
     """
     config = _load_config()
-    fast_llm = _make_fast_llm(config)
+    fast_provider = OpenAICompatibleProvider(config.fast_model)
+    fast_llm = LLMClient(fast_provider)
+
+    source = OpenCodeSource(config.opencode.db_path, config.opencode.export_command)
+    from ..mining.preprocess.pipeline import run_pipeline
 
     console.print(f"Inspecting session [cyan]{session_id}[/]...")
 
     try:
-        result = run_pipeline(session_id, fast_llm, config)
+        result = run_pipeline(session_id, fast_llm, source, config)
     except Exception as e:
         console.print(f"[red]Error: {e}[/]")
         return
@@ -438,7 +193,10 @@ def inspect(session_id: str):
         for lesson in result.lessons_learned:
             console.print(f"  - {lesson}")
 
-    _print_stats(fast_llm, None)
+    # Print LLM stats
+    fast_stats = fast_llm.reset_stats()
+    console.print(f"\n[dim]Fast LLM: {fast_stats['calls']} calls, "
+                  f"{fast_stats['input_tokens']}+{fast_stats['output_tokens']} tokens[/]")
 
 
 # ── status ──
@@ -465,7 +223,6 @@ def status():
     # Show skill files
     skill_dir = Path.home() / ".trace2skill" / "skills"
     if skill_dir.exists():
-        # Find SKILL.md files inside topic directories
         skills = list(skill_dir.rglob("*/SKILL.md"))
         if skills:
             console.print(f"\n[bold]Topic skills ({len(skills)}):[/]")
@@ -498,7 +255,6 @@ def schedule_start():
     按 Ctrl+C 停止。
     """
     import schedule as sched_mod
-    import time
 
     config = _load_config()
     if not config.scheduler.enabled:
@@ -509,7 +265,6 @@ def schedule_start():
     console.print(f"Starting scheduler with cron: {cron}")
     console.print("[dim]Press Ctrl+C to stop[/]")
 
-    # Simple implementation: parse cron for daily at HH:MM
     parts = cron.split()
     if len(parts) >= 2:
         minute, hour = parts[0], parts[1]
@@ -554,131 +309,19 @@ def schedule_status():
 def _scheduled_run():
     """Callback for scheduled runs."""
     config = _load_config()
-    fast_llm = _make_fast_llm(config)
-    strong_llm = _make_strong_llm(config)
+    pipeline = DistillPipeline.from_config(config)
 
     now = datetime.now().isoformat()
     console.print(f"[{now}] Scheduled distillation starting...")
 
-    sessions_meta = list_sessions(config, since=_last_run_ts())
-    if len(sessions_meta) < config.scheduler.min_new_sessions:
-        console.print(f"Only {len(sessions_meta)} new sessions, below threshold. Skipping.")
-        return
+    from ..output.state import StateManager
+    state_mgr = StateManager()
+    since_ts = state_mgr.get_last_run_ts()
 
-    # Run full pipeline
-    candidates = [
-        s for s in sessions_meta
-        if s.get("msg_count", 0) >= config.filter.min_messages
-    ]
-
-    trajectories = run_batch([s["id"] for s in candidates], fast_llm, config)
-    if not trajectories:
-        return
-
-    output_dir = Path(config.skill_output_dir).expanduser()
-    clustering = cluster_by_topic(
-        trajectories, fast_llm,
-        min_size=config.clustering_min_size,
-        max_topics=config.clustering_max_topics,
-        output_dir=output_dir,
-        project="scheduled",
-        protected_topics=config.protected_topics or None,
+    pipeline.run(
+        project=None,
+        since=since_ts,
     )
-
-    skills = distill_all_topics(trajectories, clustering.clusters, strong_llm)
-
-    if skills:
-        for skill in skills:
-            write_or_merge_topic(
-                skill, output_dir, "scheduled",
-                fast_llm=fast_llm,
-                max_rules=config.max_rules_per_skill,
-            )
-        write_index(skills, output_dir, "scheduled")
-        save_trajectories(trajectories, output_dir, "scheduled")
-
-    _save_state(trajectories, None)
-
-
-def _last_run_ts() -> int | None:
-    state_file = Path.home() / ".trace2skill" / "state.json"
-    if state_file.exists():
-        state = json.loads(state_file.read_text(encoding="utf-8"))
-        last = state.get("last_run", "")
-        if last:
-            dt = datetime.fromisoformat(last)
-            return int(dt.timestamp() * 1000)
-    return None
-
-
-def _save_state(trajectories, project: str | None):
-    state_file = Path.home() / ".trace2skill" / "state.json"
-    state_file.parent.mkdir(parents=True, exist_ok=True)
-
-    state = {}
-    if state_file.exists():
-        state = json.loads(state_file.read_text(encoding="utf-8"))
-
-    state.update({
-        "last_run": datetime.now().isoformat(),
-        "processed_sessions": list(set(
-            state.get("processed_sessions", [])
-            + [t.session_id for t in trajectories]
-        )),
-        "stats": {
-            "total_processed": len(state.get("processed_sessions", [])) + len(trajectories),
-        },
-    })
-
-    state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _print_stats(fast_llm: LLMClient, strong_llm: LLMClient | None):
-    fast_stats = fast_llm.reset_stats()
-    console.print(f"\n[dim]Fast LLM: {fast_stats['calls']} calls, "
-                  f"{fast_stats['input_tokens']}+{fast_stats['output_tokens']} tokens[/]")
-    if strong_llm:
-        strong_stats = strong_llm.reset_stats()
-        console.print(f"[dim]Strong LLM: {strong_stats['calls']} calls, "
-                      f"{strong_stats['input_tokens']}+{strong_stats['output_tokens']} tokens[/]")
-
-
-def _finalize_report(
-    report: DistillReport,
-    run_start: float,
-    fast_llm: LLMClient,
-    strong_llm: LLMClient | None,
-    config: DistillConfig,
-    project_name: str,
-):
-    """Finalize report data and write HTML."""
-    report.finished_at = datetime.now().isoformat()
-    report.total_duration_seconds = time.monotonic() - run_start
-    report.output_dir = str(Path(config.skill_output_dir).expanduser() / project_name)
-
-    # Collect LLM stats
-    fast_stats = fast_llm.reset_stats()
-    report.llm_usage.append(LLMUsage(
-        label=f"fast ({config.fast_model.model})",
-        calls=fast_stats["calls"],
-        input_tokens=fast_stats["input_tokens"],
-        output_tokens=fast_stats["output_tokens"],
-    ))
-    if strong_llm:
-        strong_stats = strong_llm.reset_stats()
-        report.llm_usage.append(LLMUsage(
-            label=f"strong ({config.strong_model.model})",
-            calls=strong_stats["calls"],
-            input_tokens=strong_stats["input_tokens"],
-            output_tokens=strong_stats["output_tokens"],
-        ))
-
-    # Write HTML report
-    report_dir = Path.home() / ".trace2skill" / "reports"
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / f"{report.run_id}.html"
-    generate_report(report, report_path)
-    console.print(f"\n[bold green]Report:[/] {report_path}")
 
 
 if __name__ == "__main__":

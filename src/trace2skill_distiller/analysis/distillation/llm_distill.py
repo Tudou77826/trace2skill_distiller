@@ -1,11 +1,13 @@
-"""Step 2: Per-topic distillation — extract skill rules from trajectory summaries."""
+"""LLM-based skill distillation strategy."""
 
 from __future__ import annotations
 
 from rich.console import Console
 
-from ..llm import LLMClient, estimate_tokens, truncate_to_token_budget
-from ..models import TrajectorySummary, TopicCluster, TopicSkill, SkillRule
+from ...llm import LLMClient
+from ...core.utils import estimate_tokens, truncate_to_token_budget
+from ...mining.types import TrajectorySummary
+from ..types import TopicCluster, TopicSkill, SkillRule
 
 import sys
 _console_file = open(sys.stderr.fileno(), mode='w', encoding='utf-8', errors='replace', closefd=False)
@@ -122,98 +124,95 @@ rules 用于内部统计报告，不需要写得太长。body 已经包含了完
 }}"""
 
 
-def distill_topic(
-    trajectories: list[TrajectorySummary],
-    cluster: TopicCluster,
-    llm: LLMClient,
-) -> TopicSkill | None:
-    """Run distillation for a single topic cluster."""
+class LLMDistillationStrategy:
+    """LLM-based skill distillation."""
 
-    # Get trajectories belonging to this cluster
-    cluster_ids = set(cluster.session_ids)
-    topic_trajs = [t for t in trajectories if t.session_id in cluster_ids]
+    def __init__(self, llm: LLMClient):
+        self._llm = llm
 
-    if not topic_trajs:
-        return None
+    def distill_topic(
+        self,
+        trajectories: list[TrajectorySummary],
+        cluster: TopicCluster,
+    ) -> TopicSkill | None:
+        cluster_ids = set(cluster.session_ids)
+        topic_trajs = [t for t in trajectories if t.session_id in cluster_ids]
 
-    # Separate T+ and T-
-    t_plus = [t for t in topic_trajs if t.label == "success"]
-    t_minus = [t for t in topic_trajs if t.label in ("failure", "partial")]
+        if not topic_trajs:
+            return None
 
-    if not t_plus and not t_minus:
-        return None
+        t_plus = [t for t in topic_trajs if t.label == "success"]
+        t_minus = [t for t in topic_trajs if t.label in ("failure", "partial")]
 
-    # Format summaries
-    t_plus_text = _format_trajectories(t_plus)
-    t_minus_text = _format_trajectories(t_minus)
+        if not t_plus and not t_minus:
+            return None
 
-    # Truncate to token budget
-    budget = 50000 - estimate_tokens(DISTILL_SYSTEM)
-    half_budget = budget // 2
-    t_plus_text = truncate_to_token_budget(t_plus_text, half_budget)
-    t_minus_text = truncate_to_token_budget(t_minus_text, half_budget)
+        t_plus_text = _format_trajectories(t_plus)
+        t_minus_text = _format_trajectories(t_minus)
 
-    result = llm.chat_json_with_retry(
-        DISTILL_SYSTEM,
-        DISTILL_PROMPT.format(
-            topic_name=cluster.topic_name,
-            topic_summary=cluster.topic_summary or cluster.topic_name,
-            t_plus=t_plus_text or "(none)",
-            t_minus=t_minus_text or "(none)",
-        ),
-        temperature=0.3,
-        max_tokens=8192,
-    )
+        budget = 50000 - estimate_tokens(DISTILL_SYSTEM)
+        half_budget = budget // 2
+        t_plus_text = truncate_to_token_budget(t_plus_text, half_budget)
+        t_minus_text = truncate_to_token_budget(t_minus_text, half_budget)
 
-    rules = []
-    for r in result.get("rules", []):
-        rules.append(
-            SkillRule(
-                id=r.get("id", f"rule_{len(rules)}"),
-                type=r.get("type", ""),
-                condition=r.get("condition", ""),
-                action=r.get("action", ""),
-                confidence=r.get("confidence", 0.5),
-                scope=r.get("scope", "general"),
-            )
+        result = self._llm.chat_json_with_retry(
+            DISTILL_SYSTEM,
+            DISTILL_PROMPT.format(
+                topic_name=cluster.topic_name,
+                topic_summary=cluster.topic_summary or cluster.topic_name,
+                t_plus=t_plus_text or "(none)",
+                t_minus=t_minus_text or "(none)",
+            ),
+            temperature=0.3,
+            max_tokens=8192,
         )
 
-    return TopicSkill(
-        topic_id=cluster.topic_id,
-        topic_name=cluster.topic_name,
-        skill_title=result.get("skill_title", cluster.topic_name),
-        skill_type=result.get("skill_type", "checklist"),
-        description=result.get("description", ""),
-        summary=result.get("summary", cluster.topic_summary),
-        rules=rules,
-        body=result.get("body", ""),
-        source_sessions=cluster.session_ids,
-    )
+        rules = []
+        for r in result.get("rules", []):
+            rules.append(
+                SkillRule(
+                    id=r.get("id", f"rule_{len(rules)}"),
+                    type=r.get("type", ""),
+                    condition=r.get("condition", ""),
+                    action=r.get("action", ""),
+                    confidence=r.get("confidence", 0.5),
+                    scope=r.get("scope", "general"),
+                )
+            )
 
+        return TopicSkill(
+            topic_id=cluster.topic_id,
+            topic_name=cluster.topic_name,
+            skill_title=result.get("skill_title", cluster.topic_name),
+            skill_type=result.get("skill_type", "checklist"),
+            description=result.get("description", ""),
+            summary=result.get("summary", cluster.topic_summary),
+            rules=rules,
+            body=result.get("body", ""),
+            source_sessions=cluster.session_ids,
+        )
 
-def distill_all_topics(
-    trajectories: list[TrajectorySummary],
-    clusters: list[TopicCluster],
-    llm: LLMClient,
-) -> list[TopicSkill]:
-    """Run distillation across all topic clusters."""
-    skills = []
-    for cluster in clusters:
-        try:
-            console.print(f"  Distilling topic: [cyan]{cluster.topic_name}[/] ({len(cluster.session_ids)} sessions)...")
-            skill = distill_topic(trajectories, cluster, llm)
-            if skill and (skill.rules or skill.body):
-                skills.append(skill)
-                console.print(f"    -> type={skill.skill_type}, {len(skill.rules)} rules, body={len(skill.body)} chars")
-            else:
-                console.print(f"    -> skipped (no content)")
-        except Exception as e:
-            console.print(f"    -> [red]error: {e}[/]")
-    return skills
+    def distill_all(
+        self,
+        trajectories: list[TrajectorySummary],
+        clusters: list[TopicCluster],
+    ) -> list[TopicSkill]:
+        skills = []
+        for cluster in clusters:
+            try:
+                console.print(f"  Distilling topic: [cyan]{cluster.topic_name}[/] ({len(cluster.session_ids)} sessions)...")
+                skill = self.distill_topic(trajectories, cluster)
+                if skill and (skill.rules or skill.body):
+                    skills.append(skill)
+                    console.print(f"    -> type={skill.skill_type}, {len(skill.rules)} rules, body={len(skill.body)} chars")
+                else:
+                    console.print(f"    -> skipped (no content)")
+            except Exception as e:
+                console.print(f"    -> [red]error: {e}[/]")
+        return skills
 
 
 def _format_trajectories(trajectories: list[TrajectorySummary]) -> str:
-    """Format trajectory summaries for the distillation prompt."""
     parts = []
     for t in trajectories:
         entry = f"### Session: {t.session_id}\n"

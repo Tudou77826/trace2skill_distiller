@@ -1,4 +1,4 @@
-"""Generate HTML distillation report."""
+"""HTML report presenter — self-contained HTML with inline CSS."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import html as html_mod
 from datetime import datetime
 from pathlib import Path
 
-from ..models import DistillReport
+from ..types import DistillReport
 
 # Threshold for success label color
 _SCORE_HIGH = 0.7
@@ -16,36 +16,38 @@ _SCORE_MID = 0.4
 _LABEL_ZH = {"success": "成功", "partial": "部分", "failure": "失败"}
 
 
-def generate_report(report: DistillReport, output_path: Path | None = None) -> str:
-    """Generate a self-contained HTML report. Returns HTML string."""
-    rendered = _TEMPLATE.format(
-        report_id=html_mod.escape(report.run_id or "N/A"),
-        project=html_mod.escape(report.project or "all"),
-        started=html_mod.escape(report.started_at or "—"),
-        finished=html_mod.escape(report.finished_at or "—"),
-        duration=_fmt_duration(report.total_duration_seconds),
-        sessions_total=report.sessions_total,
-        sessions_passed=report.sessions_passed_filter,
-        label_counts=_label_counts(report),
-        topics_found=report.topics_found,
-        unclustered=report.unclustered_count,
-        total_rules=report.total_rules,
-        session_table=_render_session_table(report),
-        topic_cards=_render_topic_cards(report),
-        timeline=_render_timeline(report),
-        llm_usage=_render_llm_usage(report),
-        output_files=_render_output_files(report),
-        errors=_render_errors(report),
-        summary_stats=_render_summary_stats(report),
-        nav_items=_render_nav_items(report),
-        generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    )
+class HtmlReportPresenter:
+    """Generate self-contained HTML distillation reports."""
 
-    if output_path:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(rendered, encoding="utf-8")
+    def present(self, report: DistillReport, output_path: Path | None = None) -> str:
+        rendered = _TEMPLATE.format(
+            report_id=html_mod.escape(report.run_id or "N/A"),
+            project=html_mod.escape(report.project or "all"),
+            started=html_mod.escape(report.started_at or "—"),
+            finished=html_mod.escape(report.finished_at or "—"),
+            duration=_fmt_duration(report.total_duration_seconds),
+            sessions_total=report.sessions_total,
+            sessions_passed=report.sessions_passed_filter,
+            label_counts=_label_counts(report),
+            topics_found=report.topics_found,
+            unclustered=report.unclustered_count,
+            total_rules=report.total_rules,
+            session_table=_render_session_table(report),
+            topic_cards=_render_topic_cards(report),
+            timeline=_render_timeline(report),
+            llm_usage=_render_llm_usage(report),
+            output_files=_render_output_files(report),
+            errors=_render_errors(report),
+            summary_stats=_render_summary_stats(report),
+            nav_items=_render_nav_items(report),
+            generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        )
 
-    return rendered
+        if output_path:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(rendered, encoding="utf-8")
+
+        return rendered
 
 
 def _fmt_duration(seconds: float) -> str:
@@ -89,7 +91,6 @@ def _render_session_table(report: DistillReport) -> str:
         score_col = _score_color(score_clamped)
         label_cls = f"badge badge-{s.label}" if s.label in ("success", "partial", "failure") else "badge"
         label_text = _label_zh(s.label)
-        # Show reason for non-success sessions
         reason_html = ""
         if s.label_reason:
             reason_html = f'<div class="label-reason">{html_mod.escape(s.label_reason)}</div>'
@@ -239,7 +240,7 @@ def _render_nav_items(report: DistillReport) -> str:
     return "".join(items)
 
 
-# ── HTML Template ──
+# ── HTML Template (same as original) ──
 
 _TEMPLATE = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -279,8 +280,6 @@ body {{
   padding: 0;
 }}
 .container {{ max-width: 1100px; margin: 0 auto; padding: 24px; }}
-
-/* Header */
 .report-header {{
   background: linear-gradient(135deg, #fff7ed 0%, #fef3e2 50%, #fdf6ee 100%);
   border: 1px solid var(--border);
@@ -316,8 +315,6 @@ body {{
   margin-right: 8px;
   opacity: 0.5;
 }}
-
-/* Nav */
 .nav {{
   display: flex;
   gap: 4px;
@@ -342,8 +339,6 @@ body {{
   color: var(--primary);
   background: var(--primary-bg);
 }}
-
-/* Stat grid */
 .stat-grid {{
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -370,8 +365,6 @@ body {{
   color: var(--text2);
   margin-top: 4px;
 }}
-
-/* Section */
 .section {{
   margin-bottom: 32px;
 }}
@@ -383,8 +376,6 @@ body {{
   border-bottom: 2px solid var(--primary);
   color: var(--text);
 }}
-
-/* Data table */
 .data-table {{
   width: 100%;
   border-collapse: collapse;
@@ -414,8 +405,6 @@ body {{
 .data-table tbody tr:hover {{ background: var(--primary-bg); }}
 .data-table.compact td, .data-table.compact th {{ padding: 9px 12px; }}
 .data-table.compact tr:not(:last-child) td {{ border-bottom: 1px solid var(--border); }}
-
-/* Badges */
 .badge {{
   display: inline-block;
   padding: 3px 12px;
@@ -429,8 +418,6 @@ body {{
 .badge-success {{ background: var(--success-bg); color: var(--success); }}
 .badge-partial {{ background: var(--partial-bg); color: var(--partial); }}
 .badge-failure {{ background: var(--danger-bg); color: var(--danger); }}
-
-/* Score bar */
 .score-bar {{
   display: inline-block;
   width: 60px;
@@ -450,8 +437,6 @@ body {{
   border-radius: 3px;
 }}
 .score-text {{ font-size: 12px; color: var(--text2); }}
-
-/* Label reason */
 .label-reason {{
   font-size: 12px;
   color: var(--text2);
@@ -462,8 +447,6 @@ body {{
   text-overflow: ellipsis;
   white-space: nowrap;
 }}
-
-/* Mini bar for rules */
 .mini-bar {{
   display: inline-block;
   width: 40px;
@@ -478,8 +461,6 @@ body {{
   height: 100%;
   border-radius: 2px;
 }}
-
-/* Topic cards */
 .topic-card {{
   background: var(--surface);
   border: 1px solid var(--border);
@@ -529,8 +510,6 @@ body {{
 .rule-type-when-then {{ background: var(--primary-bg); color: var(--primary); }}
 .rule-type-never {{ background: var(--danger-bg); color: var(--danger); }}
 .rule-type-avoid {{ background: var(--warning-bg); color: var(--warning); }}
-
-/* Timeline */
 .timeline-row {{
   display: flex;
   align-items: center;
@@ -552,8 +531,6 @@ body {{
   transition: width 0.6s ease;
 }}
 .timeline-dur {{ width: 80px; font-size: 14px; text-align: right; color: var(--text2); }}
-
-/* File list */
 .file-list {{
   list-style: none;
   font-size: 14px;
@@ -569,8 +546,6 @@ body {{
   font-size: 13px;
   color: var(--primary);
 }}
-
-/* Error box */
 .error-box {{
   background: var(--danger-bg);
   border: 1px solid rgba(196,84,84,0.25);
@@ -581,11 +556,7 @@ body {{
 .error-box h4 {{ color: var(--danger); margin-bottom: 8px; font-size: 15px; }}
 .error-box ul {{ padding-left: 20px; }}
 .error-box li {{ font-size: 14px; color: var(--text); }}
-
-/* Empty */
 .empty {{ color: var(--text2); font-size: 14px; padding: 12px 0; }}
-
-/* Footer */
 .report-footer {{
   text-align: center;
   color: var(--text2);
@@ -594,13 +565,9 @@ body {{
   padding-top: 20px;
   border-top: 1px solid var(--border);
 }}
-
-/* Label colors inline */
 .label-success {{ color: var(--success); font-weight: 500; }}
 .label-partial {{ color: var(--partial); font-weight: 500; }}
 .label-failure {{ color: var(--danger); font-weight: 500; }}
-
-/* Animations */
 @keyframes fadeUp {{
   from {{ opacity: 0; transform: translateY(12px); }}
   to {{ opacity: 1; transform: translateY(0); }}
@@ -611,8 +578,6 @@ body {{
 .section:nth-child(4) {{ animation-delay: 0.15s; }}
 .section:nth-child(5) {{ animation-delay: 0.2s; }}
 .section:nth-child(6) {{ animation-delay: 0.25s; }}
-
-/* Responsive */
 @media (max-width: 768px) {{
   .report-meta {{ flex-direction: column; gap: 6px; }}
   .stat-grid {{ grid-template-columns: repeat(3, 1fr); }}

@@ -1,29 +1,24 @@
-"""Level 1 & 2: Quick-LLM semantic processing.
-
-Level 1: Intent boundary detection + per-block structured extraction.
-Level 2: Cross-block aggregation into session-level narrative.
-"""
+"""Level 1 & 2: Quick-LLM semantic processing."""
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from typing import Any
 
-from ..llm import LLMClient, estimate_tokens, truncate_to_token_budget, ContextOverflowError
-from ..models import (
+from ...llm import LLMClient
+from ...core.utils import estimate_tokens, truncate_to_token_budget
+from ..types import (
     IntentBlock,
     TrajectorySummary,
     PhaseSummary,
     ProblemRecord,
     DecisionRecord,
+    CleanedSession,
 )
-from .preprocess import CleanedSession, format_anchors_for_llm, format_block_for_llm
+from .compress import format_anchors_for_llm, format_block_for_llm
 
-# Token budgets for different LLM call stages
-# Assumes ~128K context models; reserve output tokens + prompt overhead
-INPUT_TOKEN_BUDGET = 60000  # max input tokens for the user message
-PROMPT_OVERHEAD = 500       # system prompt + template tokens
+INPUT_TOKEN_BUDGET = 60000
+PROMPT_OVERHEAD = 500
 
 
 # ── Level 1: Intent boundary detection ──
@@ -60,10 +55,8 @@ BOUNDARY_PROMPT = """分析以下开发会话中的用户输入序列，识别�
 def detect_intent_boundaries(
     cleaned: CleanedSession, llm: LLMClient
 ) -> list[IntentBlock]:
-    """Level 1a: Use quick-LLM to detect intent boundaries from user anchors."""
     anchors_text = format_anchors_for_llm(cleaned)
 
-    # Short sessions: single block, skip LLM call
     if len(cleaned.user_anchors) <= 2:
         end = cleaned.user_anchors[-1].index if cleaned.user_anchors else 0
         return [
@@ -74,7 +67,6 @@ def detect_intent_boundaries(
             )
         ]
 
-    # Truncate anchors if too long
     budget = INPUT_TOKEN_BUDGET - PROMPT_OVERHEAD - estimate_tokens(BOUNDARY_SYSTEM)
     anchors_text = truncate_to_token_budget(anchors_text, budget)
 
@@ -86,10 +78,8 @@ def detect_intent_boundaries(
         json_retries=1,
     )
 
-    blocks = []
     raw_blocks = result.get("blocks", [])
     if not raw_blocks or result.get("_parse_error"):
-        # Fallback: single block
         end = cleaned.user_anchors[-1].index if cleaned.user_anchors else 0
         return [
             IntentBlock(
@@ -99,6 +89,7 @@ def detect_intent_boundaries(
             )
         ]
 
+    blocks = []
     for b in raw_blocks:
         rng = b.get("message_range", [0, 0])
         blocks.append(
@@ -108,7 +99,6 @@ def detect_intent_boundaries(
                 intent=b.get("intent", ""),
             )
         )
-
     return blocks
 
 
@@ -143,11 +133,8 @@ BLOCK_EXTRACT_PROMPT = """分析以下开发会话片段：
 def extract_block_summary(
     cleaned: CleanedSession, block: IntentBlock, llm: LLMClient
 ) -> dict[str, Any]:
-    """Level 1b: Extract structured summary for a single intent block."""
     start, end = block.message_range
     content = format_block_for_llm(cleaned, start, end)
-
-    # Truncate to token budget
     budget = INPUT_TOKEN_BUDGET - PROMPT_OVERHEAD - estimate_tokens(BLOCK_EXTRACT_SYSTEM)
     content = truncate_to_token_budget(content, budget)
 
@@ -202,10 +189,7 @@ def aggregate_session_summary(
     block_summaries: list[dict[str, Any]],
     llm: LLMClient,
 ) -> TrajectorySummary:
-    """Level 2: Aggregate block summaries into session-level TrajectorySummary."""
     summaries_text = json.dumps(block_summaries, ensure_ascii=False, indent=2)
-
-    # Truncate to token budget
     budget = INPUT_TOKEN_BUDGET - PROMPT_OVERHEAD - estimate_tokens(AGGREGATE_SYSTEM)
     summaries_text = truncate_to_token_budget(summaries_text, budget)
 
@@ -221,7 +205,6 @@ def aggregate_session_summary(
         json_retries=1,
     )
 
-    # Build TrajectorySummary from result
     phases = [
         PhaseSummary(phase=p.get("phase", ""), summary=p.get("summary", ""))
         for p in result.get("what_happened", [])
@@ -243,7 +226,6 @@ def aggregate_session_summary(
         for d in result.get("key_decisions", [])
     ]
 
-    # Compute label from multi-signal fusion
     label, score = _compute_label(cleaned, result)
 
     return TrajectorySummary(
@@ -263,40 +245,32 @@ def aggregate_session_summary(
 def _compute_label(
     cleaned: CleanedSession, llm_result: dict
 ) -> tuple[str, float]:
-    """Multi-signal fusion for trajectory labeling."""
     signals: list[tuple[str, float]] = []
 
-    # Signal: patches present
     if cleaned.has_patches:
         signals.append(("has_patch", 1.0))
 
-    # Signal: exploration with substantial tool usage (no patch but actively gathered info)
     if not cleaned.has_patches and cleaned.tool_count >= 5:
         signals.append(("exploration_rich", 0.8))
 
-    # Signal: last assistant finished cleanly
     if cleaned.last_finish == "stop":
         signals.append(("clean_stop", 0.7))
 
-    # Signal: errors present (softened — errors in exploration are normal)
     if cleaned.has_errors and not cleaned.has_patches:
         signals.append(("has_error_exploration", -0.3))
     elif cleaned.has_errors:
         signals.append(("has_error", -0.8))
 
-    # Signal: LLM-assessed outcome
     outcome = llm_result.get("overall_outcome", "")
     if outcome == "success":
         signals.append(("llm_success", 0.5))
     elif outcome == "failure":
         signals.append(("llm_failure", -0.3))
 
-    # Signal: lessons learned (indicates learning value)
     lessons = llm_result.get("lessons_learned", [])
     if lessons:
         signals.append(("has_lessons", 0.3))
 
-    # Signal: key decisions recorded (valuable insights extracted)
     decisions = llm_result.get("key_decisions", [])
     if decisions:
         signals.append(("has_decisions", 0.4))

@@ -1,7 +1,8 @@
-"""Data models for OpenCode session export format."""
+"""Mining data types — session models, preprocessing outputs."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
@@ -163,7 +164,6 @@ class Session(BaseModel):
 
     @property
     def project_name(self) -> str:
-        """Extract project name from directory path."""
         d = self.info.directory.replace("\\", "/")
         return d.rstrip("/").split("/")[-1] if d else "unknown"
 
@@ -199,7 +199,66 @@ class Session(BaseModel):
         return sum(m.info.tokens.total for m in self.assistant_messages)
 
 
-# ── Preprocessing outputs ──
+# ── Session metadata ──
+
+
+class SessionMeta(BaseModel):
+    """Session metadata for listing and filtering."""
+    id: str
+    title: str = ""
+    project: str = ""
+    msg_count: int = 0
+    tool_count: int = 0
+    timestamp: int = 0
+
+
+# ── L0 preprocessing outputs (dataclasses) ──
+
+
+@dataclass
+class UserAnchor:
+    index: int
+    text: str
+    prev_assistant_summary: str = ""
+    timestamp: int = 0
+
+
+@dataclass
+class ToolCall:
+    tool: str
+    summary: str  # one-line human-readable summary
+    status: str = "completed"
+
+
+@dataclass
+class CleanedMessage:
+    role: str
+    index: int
+    text_parts: list[str] = field(default_factory=list)
+    reasoning_conclusions: list[str] = field(default_factory=list)
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    patches: list[dict] = field(default_factory=list)
+    subtasks: list[dict] = field(default_factory=list)
+    error: dict | None = None
+    finish: str = ""
+
+
+@dataclass
+class CleanedSession:
+    session_id: str
+    project: str
+    title: str
+    message_count: int
+    tool_count: int
+    user_anchors: list[UserAnchor] = field(default_factory=list)
+    cleaned_messages: list[CleanedMessage] = field(default_factory=list)
+    has_patches: bool = False
+    has_errors: bool = False
+    last_finish: str = ""
+    total_tokens: int = 0
+
+
+# ── L1/L2 preprocessing outputs ──
 
 
 class IntentBlock(BaseModel):
@@ -209,23 +268,6 @@ class IntentBlock(BaseModel):
     message_range: tuple[int, int]  # start/end index in messages list
     intent: str
     user_inputs: list[str] = Field(default_factory=list)
-
-
-class TrajectorySummary(BaseModel):
-    """Structured output of Level 2 preprocessing."""
-
-    session_id: str
-    session_type: str = ""  # feature_development | debugging | exploration | ...
-    project: str = ""
-
-    intent: str = ""
-    what_happened: list[PhaseSummary] = Field(default_factory=list)
-    problems_encountered: list[ProblemRecord] = Field(default_factory=list)
-    key_decisions: list[DecisionRecord] = Field(default_factory=list)
-    lessons_learned: list[str] = Field(default_factory=list)
-
-    label: str = ""  # success | partial | failure
-    label_score: float = 0.0
 
 
 class PhaseSummary(BaseModel):
@@ -245,137 +287,18 @@ class DecisionRecord(BaseModel):
     outcome: str = ""
 
 
-# ── Distillation outputs ──
+class TrajectorySummary(BaseModel):
+    """Structured output of Level 2 preprocessing."""
 
-
-class SkillRule(BaseModel):
-    id: str = ""
-    type: str = ""  # ALWAYS | WHEN_THEN | NEVER | AVOID
-    condition: str = ""
-    action: str = ""
-    evidence_from_success: list[str] = Field(default_factory=list)
-    evidence_from_failure: list[str] = Field(default_factory=list)
-    confidence: float = 0.0
-    scope: str = "general"  # general | project-specific | language-specific
-
-
-class SkillPatch(BaseModel):
-    """Deprecated: kept for backward compatibility."""
-    dimension: str = ""
-    project: str = ""
-    rules: list[SkillRule] = Field(default_factory=list)
-    deprecated_rules: list[dict[str, str]] = Field(default_factory=list)
-
-
-# ── Topic-based distillation ──
-
-
-class TopicCluster(BaseModel):
-    """A group of trajectories that share a common topic."""
-    topic_id: str          # slug: "jwt-auth"
-    topic_name: str        # "JWT 认证配置"
-    topic_summary: str     # 1-2 句描述
-    session_ids: list[str] = Field(default_factory=list)
-    primary_project: str = ""
-
-
-class TopicSkill(BaseModel):
-    """Output of distilling a single topic cluster."""
-    topic_id: str
-    topic_name: str
-    skill_title: str       # "JWT 认证配置技能"
-    skill_type: str = "checklist"  # procedure | knowledge | checklist | troubleshooting | reference
-    description: str       # English, specific, with trigger words (for AI auto-discovery)
-    summary: str           # 一段概述
-    rules: list[SkillRule] = Field(default_factory=list)
-    body: str = ""         # LLM-generated Markdown body (format determined by skill_type)
-    source_sessions: list[str] = Field(default_factory=list)
-
-
-class ClusteringResult(BaseModel):
-    """Output of the topic clustering step."""
-    clusters: list[TopicCluster] = Field(default_factory=list)
-    unclustered: list[str] = Field(default_factory=list)
-
-
-class RunState(BaseModel):
-    """Persistent state for incremental processing and scheduling."""
-
-    last_run: str = ""
-    last_session_id: str = ""
-    processed_sessions: list[str] = Field(default_factory=list)
-    cost_accumulated: float = 0.0
-    stats: dict[str, int] = Field(default_factory=dict)
-
-
-# ── Report ──
-
-
-class SessionEntry(BaseModel):
-    """A single session in the report."""
     session_id: str
-    title: str = ""
+    session_type: str = ""
     project: str = ""
-    msg_count: int = 0
-    tool_count: int = 0
-    label: str = ""           # success | partial | failure | skipped
-    label_score: float = 0.0
+
     intent: str = ""
-    problems_count: int = 0
-    lessons_count: int = 0
-    label_reason: str = ""    # brief reason for non-success label
+    what_happened: list[PhaseSummary] = Field(default_factory=list)
+    problems_encountered: list[ProblemRecord] = Field(default_factory=list)
+    key_decisions: list[DecisionRecord] = Field(default_factory=list)
+    lessons_learned: list[str] = Field(default_factory=list)
 
-
-class TopicEntry(BaseModel):
-    """A topic cluster in the report."""
-    topic_id: str
-    topic_name: str
-    topic_summary: str = ""
-    session_count: int = 0
-    session_ids: list[str] = Field(default_factory=list)
-    rule_count: int = 0
-    skill_title: str = ""
-    description: str = ""
-    rules: list[SkillRule] = Field(default_factory=list)
-    output_path: str = ""
-
-
-class StepTiming(BaseModel):
-    """Timing for a pipeline step."""
-    name: str
-    start: str = ""
-    end: str = ""
-    duration_seconds: float = 0.0
-
-
-class LLMUsage(BaseModel):
-    """LLM API usage stats."""
-    label: str          # "fast" or "strong"
-    calls: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-
-
-class DistillReport(BaseModel):
-    """Full report of a distillation run."""
-    run_id: str = ""
-    project: str = ""
-    started_at: str = ""
-    finished_at: str = ""
-    total_duration_seconds: float = 0.0
-
-    sessions_total: int = 0
-    sessions_passed_filter: int = 0
-    sessions: list[SessionEntry] = Field(default_factory=list)
-
-    topics_found: int = 0
-    unclustered_count: int = 0
-    topics: list[TopicEntry] = Field(default_factory=list)
-
-    total_rules: int = 0
-
-    steps: list[StepTiming] = Field(default_factory=list)
-    llm_usage: list[LLMUsage] = Field(default_factory=list)
-
-    errors: list[str] = Field(default_factory=list)
-    output_dir: str = ""
+    label: str = ""
+    label_score: float = 0.0
