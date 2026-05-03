@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from rich.console import Console
 from rich.progress import Progress
 
 from ...llm import LLMClient
 from ...core.config import DistillConfig
+from ...core.console import console
 from ..types import TrajectorySummary
 from ..sources.base import SessionSource
 from .compress import preprocess, should_process, CleanedSession
@@ -15,10 +15,6 @@ from .extract import (
     extract_block_summary,
     aggregate_session_summary,
 )
-
-import sys
-_console_file = open(sys.stderr.fileno(), mode='w', encoding='utf-8', errors='replace', closefd=False)
-console = Console(file=_console_file)
 
 
 def run_pipeline(

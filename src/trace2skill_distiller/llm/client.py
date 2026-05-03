@@ -139,6 +139,12 @@ class LLMClient:
         self.call_count = 0
         return stats
 
+    def close(self) -> None:
+        """Close the underlying provider and release connections."""
+        provider = self._provider
+        if hasattr(provider, "close"):
+            provider.close()
+
     @staticmethod
     def _extract_json(text: str) -> dict[str, Any]:
         """Extract JSON from LLM response, handling markdown fences, preamble,
@@ -201,7 +207,8 @@ def _repair_truncated_json(text: str) -> dict[str, Any] | None:
         if ch == "\\":
             escape = True
             continue
-        if ch == '"' and not escape:
+        if ch == '"':
+            # escape is always False here: True was consumed by the branch above
             in_string = not in_string
             continue
         if in_string:

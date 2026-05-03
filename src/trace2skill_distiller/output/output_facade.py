@@ -7,6 +7,7 @@ from typing import Protocol, runtime_checkable
 
 from ..llm import LLMClient
 from ..core.config import OutputConfig
+from ..core.console import console
 from ..mining.types import TrajectorySummary
 from ..analysis.types import TopicSkill
 from .types import DistillReport, ShapingResult
@@ -15,11 +16,6 @@ from .formatters.skill_md import SkillMdFormatter, save_trajectories
 from .presenters.base import ReportPresenter
 from .presenters.html_report import HtmlReportPresenter
 from .state import StateManager
-
-import sys
-from rich.console import Console
-_console_file = open(sys.stderr.fileno(), mode='w', encoding='utf-8', errors='replace', closefd=False)
-console = Console(file=_console_file)
 
 
 @runtime_checkable

@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-from rich.console import Console
-
 from ...llm import LLMClient
+from ...core.console import console
 from ...core.utils import estimate_tokens, truncate_to_token_budget
 from ...mining.types import TrajectorySummary
 from ..types import TopicCluster, TopicSkill, SkillRule
-
-import sys
-_console_file = open(sys.stderr.fileno(), mode='w', encoding='utf-8', errors='replace', closefd=False)
-console = Console(file=_console_file)
 
 DISTILL_SYSTEM = """你是一个高级软件工程师，擅长从开发轨迹中提炼可复用的最佳实践。
 请分析提供的成功和失败轨迹，提炼出 Skill。"""

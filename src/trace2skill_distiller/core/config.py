@@ -18,10 +18,29 @@ class LLMConfig(BaseModel):
     base_url: str = ""
     verify_ssl: bool = False
     proxy: str = ""  # empty = no proxy
+    proxy_bypass: str = ""  # comma-separated regex patterns for hosts that bypass proxy
     timeout: float = 120.0
     connect_timeout: float = 10.0
     extra_headers: dict[str, str] = Field(default_factory=dict)
     user_agent: str = "curl/8.0"
+
+    @classmethod
+    def from_yaml(cls, data: dict, defaults: "LLMConfig | None" = None) -> "LLMConfig":
+        """Build LLMConfig from a YAML dict, falling back to defaults."""
+        d = defaults
+        return cls(
+            api_key=data.get("api_key", d.api_key if d else ""),
+            base_url=data.get("base_url", d.base_url if d else ""),
+            model=data.get("model", d.model if d else "openai/gpt-oss-120b"),
+            max_tokens=data.get("max_tokens", d.max_tokens if d else 4096),
+            verify_ssl=data.get("verify_ssl", d.verify_ssl if d else False),
+            proxy=data.get("proxy", d.proxy if d else ""),
+            proxy_bypass=data.get("proxy_bypass", d.proxy_bypass if d else ""),
+            timeout=data.get("timeout", d.timeout if d else 120.0),
+            connect_timeout=data.get("connect_timeout", d.connect_timeout if d else 10.0),
+            extra_headers=data.get("extra_headers", d.extra_headers if d else {}),
+            user_agent=data.get("user_agent", d.user_agent if d else "curl/8.0"),
+        )
 
 
 # Backward-compatible alias
@@ -37,12 +56,6 @@ class DistillFilter(BaseModel):
     min_messages: int = 5
     min_tools: int = 3
     projects: list[str] = Field(default_factory=list)
-
-
-class MiningConfig(BaseModel):
-    """Configuration for the mining layer."""
-    min_messages: int = 5
-    min_tools: int = 3
 
 
 class AnalysisConfig(BaseModel):
@@ -77,14 +90,8 @@ class DistillConfig(BaseModel):
     opencode: OpenCodeConfig = Field(default_factory=OpenCodeConfig)
     filter: DistillFilter = Field(default_factory=DistillFilter)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
-    mining: MiningConfig = Field(default_factory=MiningConfig)
     analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
-    skill_output_dir: str = "~/.trace2skill/skills"
-    max_rules_per_skill: int = 15
-    clustering_min_size: int = 1
-    clustering_max_topics: int = 8
-    protected_topics: list[str] = Field(default_factory=list)
 
     @staticmethod
     def default_config_path() -> Path:
@@ -104,30 +111,41 @@ class DistillConfig(BaseModel):
         env_url = os.getenv("TRACE2SKILL_BASE_URL")
         env_fast = os.getenv("TRACE2SKILL_FAST_MODEL")
         env_strong = os.getenv("TRACE2SKILL_STRONG_MODEL")
-
-        models = raw.get("models", {})
-        fast = models.get("fast", {})
-        strong = models.get("strong", {})
-
         env_verify_ssl = os.getenv("TRACE2SKILL_VERIFY_SSL")
         env_proxy = os.getenv("TRACE2SKILL_PROXY")
 
-        fast_model = LLMConfig(
-            api_key=env_key or fast.get("api_key", ""),
-            base_url=env_url or fast.get("base_url", ""),
-            model=env_fast or fast.get("model", "openai/gpt-oss-120b"),
-            max_tokens=fast.get("max_tokens", 4096),
-            verify_ssl=fast.get("verify_ssl", env_verify_ssl != "true" if env_verify_ssl else False),
-            proxy=env_proxy or fast.get("proxy", ""),
-        )
-        strong_model = LLMConfig(
-            api_key=env_key or strong.get("api_key", fast_model.api_key),
-            base_url=env_url or strong.get("base_url", fast_model.base_url),
-            model=env_strong or strong.get("model", "openai/gpt-oss-120b"),
-            max_tokens=strong.get("max_tokens", 8192),
-            verify_ssl=strong.get("verify_ssl", fast_model.verify_ssl),
-            proxy=strong.get("proxy", fast_model.proxy),
-        )
+        models = raw.get("models", {})
+        fast_data = models.get("fast", {})
+        strong_data = models.get("strong", {})
+
+        # Build fast model from YAML with full field coverage
+        fast_model = LLMConfig.from_yaml(fast_data)
+        # Apply environment variable overlay
+        fast_overrides: dict = {}
+        if env_key:
+            fast_overrides["api_key"] = env_key
+        if env_url:
+            fast_overrides["base_url"] = env_url
+        if env_fast:
+            fast_overrides["model"] = env_fast
+        if env_verify_ssl is not None:
+            fast_overrides["verify_ssl"] = env_verify_ssl.lower() == "true"
+        if env_proxy:
+            fast_overrides["proxy"] = env_proxy
+        if fast_overrides:
+            fast_model = fast_model.model_copy(update=fast_overrides)
+
+        # Build strong model with fast as fallback defaults
+        strong_model = LLMConfig.from_yaml(strong_data, defaults=fast_model)
+        strong_overrides: dict = {}
+        if env_key:
+            strong_overrides["api_key"] = env_key
+        if env_url:
+            strong_overrides["base_url"] = env_url
+        if env_strong:
+            strong_overrides["model"] = env_strong
+        if strong_overrides:
+            strong_model = strong_model.model_copy(update=strong_overrides)
 
         oc = raw.get("opencode", {})
         fl = raw.get("filter", {})
@@ -139,10 +157,6 @@ class DistillConfig(BaseModel):
             opencode=OpenCodeConfig(**oc),
             filter=DistillFilter(**fl),
             scheduler=SchedulerConfig(**sched),
-            mining=MiningConfig(
-                min_messages=fl.get("min_messages", 5),
-                min_tools=fl.get("min_tools", 3),
-            ),
             analysis=AnalysisConfig(
                 clustering_min_size=raw.get("clustering_min_size", 1),
                 clustering_max_topics=raw.get("clustering_max_topics", 8),
@@ -152,11 +166,6 @@ class DistillConfig(BaseModel):
                 skill_output_dir=raw.get("skill_output_dir", "~/.trace2skill/skills"),
                 max_rules_per_skill=raw.get("max_rules_per_skill", 15),
             ),
-            skill_output_dir=raw.get("skill_output_dir", "~/.trace2skill/skills"),
-            max_rules_per_skill=raw.get("max_rules_per_skill", 15),
-            clustering_min_size=raw.get("clustering_min_size", 1),
-            clustering_max_topics=raw.get("clustering_max_topics", 8),
-            protected_topics=raw.get("protected_topics", []),
         )
 
 
@@ -165,15 +174,38 @@ def init_default_config(
     base_url: str,
     fast_model: str,
     strong_model: str,
+    proxy: str = "",
+    proxy_bypass: str = "",
+    verify_ssl: bool = False,
+    timeout: float = 120.0,
+    connect_timeout: float = 10.0,
 ) -> Path:
     """Create default config.yaml with provided credentials."""
     config_dir = Path.home() / ".trace2skill"
     config_dir.mkdir(parents=True, exist_ok=True)
 
+    fast_cfg: dict = {"model": fast_model, "max_tokens": 4096}
+    strong_cfg: dict = {"model": strong_model, "max_tokens": 8192}
+    if verify_ssl:
+        fast_cfg["verify_ssl"] = True
+        strong_cfg["verify_ssl"] = True
+    if proxy:
+        fast_cfg["proxy"] = proxy
+        strong_cfg["proxy"] = proxy
+    if proxy_bypass:
+        fast_cfg["proxy_bypass"] = proxy_bypass
+        strong_cfg["proxy_bypass"] = proxy_bypass
+    if timeout != 120.0:
+        fast_cfg["timeout"] = timeout
+        strong_cfg["timeout"] = timeout
+    if connect_timeout != 10.0:
+        fast_cfg["connect_timeout"] = connect_timeout
+        strong_cfg["connect_timeout"] = connect_timeout
+
     config = {
         "models": {
-            "fast": {"model": fast_model, "max_tokens": 4096},
-            "strong": {"model": strong_model, "max_tokens": 8192},
+            "fast": fast_cfg,
+            "strong": strong_cfg,
         },
         "opencode": {
             "db_path": "~/.local/share/opencode/opencode.db",
@@ -198,3 +230,69 @@ def init_default_config(
         f.write(f"TRACE2SKILL_BASE_URL={base_url}\n")
 
     return config_path
+
+
+# Mapping: dotted key -> (YAML path segments, type converter)
+_CONFIG_KEY_MAP: dict[str, tuple[list[str], type]] = {
+    "fast.model": (["models", "fast", "model"], str),
+    "fast.max_tokens": (["models", "fast", "max_tokens"], int),
+    "fast.api_key": (["models", "fast", "api_key"], str),
+    "fast.base_url": (["models", "fast", "base_url"], str),
+    "fast.verify_ssl": (["models", "fast", "verify_ssl"], bool),
+    "fast.proxy": (["models", "fast", "proxy"], str),
+    "fast.proxy_bypass": (["models", "fast", "proxy_bypass"], str),
+    "fast.timeout": (["models", "fast", "timeout"], float),
+    "fast.connect_timeout": (["models", "fast", "connect_timeout"], float),
+    "fast.user_agent": (["models", "fast", "user_agent"], str),
+    "strong.model": (["models", "strong", "model"], str),
+    "strong.max_tokens": (["models", "strong", "max_tokens"], int),
+    "strong.api_key": (["models", "strong", "api_key"], str),
+    "strong.base_url": (["models", "strong", "base_url"], str),
+    "strong.verify_ssl": (["models", "strong", "verify_ssl"], bool),
+    "strong.proxy": (["models", "strong", "proxy"], str),
+    "strong.proxy_bypass": (["models", "strong", "proxy_bypass"], str),
+    "strong.timeout": (["models", "strong", "timeout"], float),
+    "strong.connect_timeout": (["models", "strong", "connect_timeout"], float),
+    "strong.user_agent": (["models", "strong", "user_agent"], str),
+}
+
+
+def set_config_value(key: str, value: str) -> None:
+    """Set a single config value by dotted key (e.g. 'fast.proxy').
+
+    Reads config.yaml, sets the value at the mapped path, and writes back.
+    Supports type conversion: bool ("true"/"false"), int, float, str.
+    """
+    if key not in _CONFIG_KEY_MAP:
+        if key.endswith(".extra_headers"):
+            raise ValueError(
+                f"Cannot set '{key}' via CLI — extra_headers is a dict. "
+                "Edit config.yaml directly: trace2skill config edit"
+            )
+        valid = ", ".join(sorted(_CONFIG_KEY_MAP.keys()))
+        raise ValueError(f"Unknown config key: {key}. Valid keys: {valid}")
+
+    path_segments, converter = _CONFIG_KEY_MAP[key]
+
+    # Type conversion
+    if converter is bool:
+        converted: bool | int | float | str = value.lower() in ("true", "1", "yes")
+    else:
+        converted = converter(value)
+
+    config_path = DistillConfig.default_config_path()
+    if not config_path.exists():
+        raise ValueError(
+            f"Config file not found at {config_path}. Run 'trace2skill init' first."
+        )
+    with open(config_path, encoding="utf-8") as f:
+        raw: dict = yaml.safe_load(f) or {}
+
+    # Walk to the parent dict, creating intermediates as needed
+    node = raw
+    for segment in path_segments[:-1]:
+        node = node.setdefault(segment, {})
+    node[path_segments[-1]] = converted
+
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(raw, f, default_flow_style=False, allow_unicode=True)

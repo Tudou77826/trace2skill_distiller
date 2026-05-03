@@ -7,11 +7,11 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
 from ..core.config import DistillConfig
+from ..core.console import console
 from ..llm import LLMClient
 from ..llm.providers.openai_compatible import OpenAICompatibleProvider
 from ..mining.mining_facade import MiningLayer, DefaultMiningLayer
@@ -28,10 +28,6 @@ from ..output.state import StateManager
 from ..output.types import (
     DistillReport, SessionEntry, TopicEntry, StepTiming, LLMUsage, ShapingResult,
 )
-
-import sys
-_console_file = open(sys.stderr.fileno(), mode='w', encoding='utf-8', errors='replace', closefd=False)
-console = Console(file=_console_file)
 
 
 class DistillPipeline:
@@ -168,7 +164,7 @@ class DistillPipeline:
             return report
 
         if step == 1:
-            output_dir = Path(self._config.skill_output_dir).expanduser()
+            output_dir = Path(self._config.output.skill_output_dir).expanduser()
             path = save_trajectories(trajectories, output_dir, project or "all")
             console.print(f"Trajectories saved to: {path}")
             _finalize_report(report, run_start, self._fast_llm, self._strong_llm, self._config, project_name)
@@ -177,7 +173,7 @@ class DistillPipeline:
         # ── Step 1.5 + 2: Analysis (clustering + distillation) ──
         console.print("\n[bold]Step 1.5: Clustering trajectories by topic...[/]")
         step_start = time.monotonic()
-        output_dir = Path(self._config.skill_output_dir).expanduser()
+        output_dir = Path(self._config.output.skill_output_dir).expanduser()
 
         analysis_result = self._analysis.analyze(
             trajectories,
@@ -279,7 +275,7 @@ class DistillPipeline:
         mining = DefaultMiningLayer(source, fast_llm, config)
 
         # Build analysis layer
-        output_dir = Path(config.skill_output_dir).expanduser()
+        output_dir = Path(config.output.skill_output_dir).expanduser()
         analysis = DefaultAnalysisLayer(
             SemanticClusterStrategy(fast_llm, output_dir),
             LLMDistillationStrategy(strong_llm),
@@ -288,7 +284,7 @@ class DistillPipeline:
 
         # Build output layer
         output = DefaultOutputLayer(
-            SkillMdFormatter(merge_llm=fast_llm, max_rules=config.max_rules_per_skill),
+            SkillMdFormatter(merge_llm=fast_llm, max_rules=config.output.max_rules_per_skill),
             HtmlReportPresenter(),
             StateManager(),
             config.output,
@@ -308,7 +304,7 @@ def _finalize_report(
     """Finalize report data and write HTML."""
     report.finished_at = datetime.now().isoformat()
     report.total_duration_seconds = time.monotonic() - run_start
-    report.output_dir = str(Path(config.skill_output_dir).expanduser() / project_name)
+    report.output_dir = str(Path(config.output.skill_output_dir).expanduser() / project_name)
 
     # Collect LLM stats
     fast_stats = fast_llm.reset_stats()

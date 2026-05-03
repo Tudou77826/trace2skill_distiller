@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import httpx
 
+from ..transport import ProxyBypassTransport
 from ..types import LLMConfig, LLMResponse, LLMUsageStats, ContextOverflowError
 from ...core.utils import estimate_tokens
 
@@ -31,6 +30,12 @@ class OpenAICompatibleProvider:
         self.total_output_tokens = 0
         self.call_count = 0
 
+        if not config.api_key:
+            raise ValueError(
+                "API key is empty. Set TRACE2SKILL_API_KEY env var "
+                "or configure api_key in config.yaml"
+            )
+
         proxy_arg: str | None = config.proxy or None
 
         headers = {
@@ -40,16 +45,34 @@ class OpenAICompatibleProvider:
         }
         headers.update(config.extra_headers)
 
-        self._client = httpx.Client(
-            headers=headers,
-            timeout=httpx.Timeout(config.timeout, connect=config.connect_timeout),
-            verify=config.verify_ssl,
-            proxy=proxy_arg,
-        )
+        timeout = httpx.Timeout(config.timeout, connect=config.connect_timeout)
+
+        if config.proxy and config.proxy_bypass:
+            transport = ProxyBypassTransport(
+                proxy=config.proxy,
+                bypass_patterns=config.proxy_bypass,
+                verify=config.verify_ssl,
+            )
+            self._client = httpx.Client(
+                headers=headers, timeout=timeout, transport=transport,
+            )
+        elif config.proxy:
+            self._client = httpx.Client(
+                headers=headers, timeout=timeout,
+                verify=config.verify_ssl, proxy=proxy_arg,
+            )
+        else:
+            self._client = httpx.Client(
+                headers=headers, timeout=timeout, verify=config.verify_ssl,
+            )
 
     @property
     def model_name(self) -> str:
         return self._model
+
+    def close(self) -> None:
+        """Close the underlying httpx client and release connections."""
+        self._client.close()
 
     def complete(
         self,
@@ -91,11 +114,16 @@ class OpenAICompatibleProvider:
         self.total_output_tokens += output_tokens
         self.call_count += 1
 
-        finish_reason = data.get("choices", [{}])[0].get("finish_reason", "")
+        choices = data.get("choices", [])
+        if not choices:
+            raise ValueError(f"Empty choices in LLM response: {data}")
+
+        choice = choices[0]
+        finish_reason = choice.get("finish_reason", "")
 
         # Extract content — some models put text in reasoning_content
-        choice = data["choices"][0]["message"]
-        content = choice.get("content") or choice.get("reasoning_content") or ""
+        message = choice.get("message", {})
+        content = message.get("content") or message.get("reasoning_content") or ""
 
         return LLMResponse(
             content=content,

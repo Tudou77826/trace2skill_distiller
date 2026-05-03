@@ -6,7 +6,6 @@ import json
 import sqlite3
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 from .base import SessionSource
 from ..types import Session, SessionMeta
@@ -35,27 +34,30 @@ class OpenCodeSource:
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
 
-        query = """
-            SELECT s.id, s.project_id, s.slug, s.directory, s.title,
-                   s.time_created, s.time_updated,
-                   (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) AS msg_count
-            FROM session s
-            WHERE 1=1
-        """
-        params: list = []
+        try:
+            query = """
+                SELECT s.id, s.project_id, s.slug, s.directory, s.title,
+                       s.time_created, s.time_updated,
+                       (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) AS msg_count
+                FROM session s
+                WHERE 1=1
+            """
+            params: list = []
 
-        if project:
-            query += " AND s.directory LIKE ?"
-            params.append(f"%{project}%")
+            if project:
+                safe_project = project.replace("%", "\\%").replace("_", "\\_")
+                query += " AND s.directory LIKE ? ESCAPE '\\'"
+                params.append(f"%{safe_project}%")
 
-        if since:
-            query += " AND s.time_updated > ?"
-            params.append(since)
+            if since:
+                query += " AND s.time_updated > ?"
+                params.append(since)
 
-        query += " ORDER BY s.time_updated DESC"
+            query += " ORDER BY s.time_updated DESC"
 
-        rows = conn.execute(query, params).fetchall()
-        conn.close()
+            rows = conn.execute(query, params).fetchall()
+        finally:
+            conn.close()
 
         results = []
         for r in rows:
@@ -106,15 +108,17 @@ class OpenCodeSource:
         """Count tool-call parts for a session."""
         db_path = self._get_db()
         conn = sqlite3.connect(str(db_path))
-        result = conn.execute(
-            """
-            SELECT COUNT(*) FROM part p
-            WHERE p.session_id = ?
-              AND json_extract(p.data, '$.type') = 'tool'
-            """,
-            (session_id,),
-        ).fetchone()
-        conn.close()
+        try:
+            result = conn.execute(
+                """
+                SELECT COUNT(*) FROM part p
+                WHERE p.session_id = ?
+                  AND json_extract(p.data, '$.type') = 'tool'
+                """,
+                (session_id,),
+            ).fetchone()
+        finally:
+            conn.close()
         return result[0] if result else 0
 
     @staticmethod

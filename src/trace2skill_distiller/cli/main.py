@@ -3,25 +3,22 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
 import click
-from rich.console import Console
 from rich.panel import Panel
 
-from ..core.config import DistillConfig, init_default_config
+from ..core.config import DistillConfig, LLMConfig, init_default_config, set_config_value
+from ..core.console import console
 from ..llm import LLMClient
 from ..llm.providers.openai_compatible import OpenAICompatibleProvider
 from ..mining.mining_facade import DefaultMiningLayer
 from ..mining.sources.opencode import OpenCodeSource
 from ..orchestrator.pipeline import DistillPipeline
-
-import sys as _sys
-_console_file = open(_sys.stderr.fileno(), mode='w', encoding='utf-8', errors='replace', closefd=False)
-console = Console(file=_console_file)
 
 
 def _load_config() -> DistillConfig:
@@ -31,8 +28,9 @@ def _load_config() -> DistillConfig:
         for line in env_file.read_text(encoding="utf-8").splitlines():
             if "=" in line and not line.startswith("#"):
                 key, _, val = line.partition("=")
-                import os
-                os.environ[key.strip()] = val.strip()
+                key = key.strip()
+                if key.startswith("TRACE2SKILL_"):
+                    os.environ[key] = val.strip()
     return DistillConfig.load()
 
 
@@ -71,13 +69,26 @@ def cli():
 @click.option("--base-url", prompt="Base URL", help="LLM API 基础地址（如 https://api.openai.com/v1）")
 @click.option("--fast-model", default="openai/gpt-oss-120b", help="快速模型（用于 L1/L2 预处理）")
 @click.option("--strong-model", default="openai/gpt-oss-120b", help="强力模型（用于蒸馏和合并）")
-def init(api_key: str, base_url: str, fast_model: str, strong_model: str):
+@click.option("--proxy", default="", help="代理地址（如 socks5://127.0.0.1:1080）")
+@click.option("--proxy-bypass", default="", help="不走代理的 host 正则，逗号分隔（如 localhost,127\\.0\\.0\\.1）")
+@click.option("--verify-ssl/--no-verify-ssl", default=False, help="是否验证 SSL 证书")
+@click.option("--timeout", type=float, default=120.0, help="请求超时（秒）")
+@click.option("--connect-timeout", type=float, default=10.0, help="连接超时（秒）")
+def init(
+    api_key: str, base_url: str, fast_model: str, strong_model: str,
+    proxy: str, proxy_bypass: str, verify_ssl: bool,
+    timeout: float, connect_timeout: float,
+):
     """初始化 trace2skill 配置。
 
     创建 ~/.trace2skill/config.yaml 和 ~/.trace2skill/.env，
     写入 API 凭证。首次使用前运行一次即可。
     """
-    path = init_default_config(api_key, base_url, fast_model, strong_model)
+    path = init_default_config(
+        api_key, base_url, fast_model, strong_model,
+        proxy=proxy, proxy_bypass=proxy_bypass,
+        verify_ssl=verify_ssl, timeout=timeout, connect_timeout=connect_timeout,
+    )
     console.print(Panel(
         f"Config created: {path}\n"
         f"API key saved to: {path.parent / '.env'}\n"
@@ -229,6 +240,113 @@ def status():
             for s in skills:
                 size = s.stat().st_size
                 console.print(f"  {s.relative_to(skill_dir)} ({size} bytes)")
+
+
+# ── config ──
+
+@cli.group()
+def config():
+    """查看和管理配置。
+
+    \b
+    子命令:
+      show   显示当前有效配置（API Key 脱敏）
+      set    设置单个配置项（点分路径 key）
+      edit   用默认编辑器打开 config.yaml
+    """
+    pass
+
+
+def _mask(s: str | None, visible: int = 4) -> str:
+    """Mask a string, showing only the first `visible` chars."""
+    if not s:
+        return "(not set)"
+    if len(s) <= visible:
+        return "*" * len(s)
+    return s[:visible] + "*" * (len(s) - visible)
+
+
+def _format_llm_panel(label: str, cfg: LLMConfig) -> Panel:
+    """Build a Rich Panel for one LLMConfig."""
+    return Panel(
+        f"model: {cfg.model}\n"
+        f"max_tokens: {cfg.max_tokens}\n"
+        f"api_key: {_mask(cfg.api_key)}\n"
+        f"base_url: {cfg.base_url}\n"
+        f"verify_ssl: {cfg.verify_ssl}\n"
+        f"proxy: {cfg.proxy or '(none)'}\n"
+        f"proxy_bypass: {cfg.proxy_bypass or '(none)'}\n"
+        f"timeout: {cfg.timeout}\n"
+        f"connect_timeout: {cfg.connect_timeout}\n"
+        f"extra_headers: {cfg.extra_headers or '(none)'}\n"
+        f"user_agent: {cfg.user_agent}",
+        title=label,
+    )
+
+
+@config.command("show")
+def config_show():
+    """显示当前有效配置（API Key 脱敏）。
+
+    从 ~/.trace2skill/config.yaml 加载配置，展示 fast 和 strong
+    模型的全部字段。环境变量覆盖也会反映在输出中。
+    """
+    cfg = _load_config()
+    console.print(_format_llm_panel("Fast Model", cfg.fast_model))
+    console.print()
+    console.print(_format_llm_panel("Strong Model", cfg.strong_model))
+
+
+@config.command("set")
+@click.argument("key")
+@click.argument("value")
+def config_set(key: str, value: str):
+    """设置单个配置项。
+
+    KEY 使用点分路径格式，如 fast.proxy、strong.timeout。
+    VALUE 为字符串值，会自动转换为正确的类型。
+
+    \b
+    示例:
+      $ trace2skill config set fast.proxy socks5://127.0.0.1:1080
+      $ trace2skill config set fast.proxy_bypass "localhost,127\\.0\\.0\\.1"
+      $ trace2skill config set strong.timeout 180
+      $ trace2skill config set fast.verify_ssl true
+    """
+    try:
+        set_config_value(key, value)
+        console.print(f"[green]Set {key} = {value}[/]")
+    except ValueError as e:
+        console.print(f"[red]{e}[/]")
+
+
+@config.command("edit")
+def config_edit():
+    """用默认编辑器打开 config.yaml。
+
+    使用 VISUAL 或 EDITOR 环境变量指定的编辑器。
+    若未设置则回退到 notepad (Windows) 或 vi (Unix)。
+    """
+    import subprocess
+    import platform
+
+    config_path = DistillConfig.default_config_path()
+    if not config_path.exists():
+        console.print("[red]No config file found. Run 'trace2skill init' first.[/]")
+        return
+
+    editor = (
+        os.environ.get("VISUAL")
+        or os.environ.get("EDITOR")
+        or ("notepad" if platform.system() == "Windows" else "vi")
+    )
+    console.print(f"Opening {config_path} with {editor}...")
+    try:
+        subprocess.call([editor, str(config_path)])
+    except FileNotFoundError:
+        console.print(f"[red]Editor '{editor}' not found. Set VISUAL or EDITOR env var.[/]")
+    except OSError as e:
+        console.print(f"[red]Failed to open editor: {e}[/]")
 
 
 # ── schedule ──
