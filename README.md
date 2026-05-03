@@ -115,9 +115,17 @@ trace2skill init \
   --base-url "https://api.example.com/v1" \
   --fast-model "gpt-4o-mini" \
   --strong-model "gpt-4o"
+
+# 可选：代理、超时等
+trace2skill init \
+  --api-key "your-api-key" \
+  --base-url "https://api.example.com/v1" \
+  --proxy "socks5://127.0.0.1:1080" \
+  --proxy-bypass "localhost,127\\.0\\.0\\.1" \
+  --timeout 180
 ```
 
-要求 Python >= 3.10，使用 [uv](https://github.com/astral-sh/uv) 管理依赖。
+需要 SOCKS 代理时安装 `httpx[socks]`：`uv add "httpx[socks]"`。要求 Python >= 3.10。
 
 ## 使用
 
@@ -145,6 +153,22 @@ trace2skill status
 
 # 定时任务（每天凌晨自动提炼）
 trace2skill schedule start
+```
+
+### 配置管理
+
+```bash
+# 查看当前有效配置（API Key 脱敏）
+trace2skill config show
+
+# 设置单个配置项（点分路径 key）
+trace2skill config set fast.proxy socks5://127.0.0.1:1080
+trace2skill config set fast.proxy_bypass "localhost,127\\.0\\.0\\.1"
+trace2skill config set strong.timeout 180
+trace2skill config set fast.verify_ssl true
+
+# 用编辑器直接修改配置文件
+trace2skill config edit
 ```
 
 每次蒸馏完成后生成 HTML 报告至 `~/.trace2skill/reports/`，包含会话筛选、主题分布、规则统计、LLM 开销等。
@@ -197,6 +221,12 @@ models:
   fast:
     model: "gpt-4o-mini"
     max_tokens: 4096
+    proxy: "socks5://127.0.0.1:1080"          # 可选：代理地址
+    proxy_bypass: "localhost,127\\.0\\.0\\.1"   # 可选：不走代理的 host 正则（逗号分隔）
+    timeout: 120                               # 可选：请求超时（秒）
+    connect_timeout: 10                        # 可选：连接超时（秒）
+    verify_ssl: false                          # 可选：是否验证 SSL
+    user_agent: "curl/8.0"                     # 可选：自定义 User-Agent
   strong:
     model: "gpt-4o"
     max_tokens: 8192
@@ -233,16 +263,18 @@ TRACE2SKILL_PROXY=
 ```
 src/trace2skill_distiller/
 ├── core/                            # 共享基础
-│   ├── config.py                    # DistillConfig + 子配置 (LLMConfig, MiningConfig, ...)
+│   ├── config.py                    # DistillConfig + 子配置 (LLMConfig, AnalysisConfig, ...)
+│   ├── console.py                   # 共享 Rich Console 单例
 │   ├── types.py                     # Label, SkillType, RuleType 枚举
-│   └── utils.py                     # estimate_tokens, truncate_to_token_budget
+│   └── utils.py                     # estimate_tokens (CJK感知), truncate_to_token_budget
 │
 ├── llm/                             # 模块 1：LLM 接驳
 │   ├── base.py                      # Protocol: LLMProvider
-│   ├── client.py                    # LLMClient (重试/JSON修复/token追踪)
+│   ├── client.py                    # LLMClient (重试/JSON修复/token追踪/close)
+│   ├── transport.py                 # ProxyBypassTransport (代理绕过路由)
 │   ├── types.py                     # LLMResponse, LLMUsageStats
 │   └── providers/
-│       └── openai_compatible.py     # httpx 实现 (代理/SSL/自定义header)
+│       └── openai_compatible.py     # httpx 实现 (代理绕过/SSL/API key验证)
 │
 ├── mining/                          # 模块 2：数据采集
 │   ├── types.py                     # Session, TrajectorySummary, CleanedSession
@@ -280,17 +312,21 @@ src/trace2skill_distiller/
 │   └── pipeline.py                  # DistillPipeline (组合四大模块)
 │
 └── cli/
-    └── main.py                      # Click CLI (distill/inspect/status/schedule)
+    └── main.py                      # Click CLI (distill/inspect/status/config/schedule)
+```
 ```
 
 ## 可靠性
 
 - **语义压缩而非硬截断** — 工具输出压缩 100 倍，保留关键信息
+- **CJK 感知的 Token 估算** — 中文字符按 1.5 字符/token 估算，避免低估导致截断
 - **JSON 自修复** — 自动修复 LLM 输出的截断 JSON
 - **指数退避重试** — 网络错误最多重试 3 次
 - **错误隔离** — 单个会话/主题失败不阻塞其他处理
 - **Token 预算感知** — 发送前估算 token 数，超预算自动压缩
 - **增量处理** — 已处理的会话不重复消耗 token
+- **代理绕过** — 支持 NO_PROXY 风格的正则规则，内网地址直连
+- **资源安全** — SQLite 连接 try/finally、httpx 客户端显式 close、.env 仅加载 TRACE2SKILL_ 前缀
 
 ## 致谢
 
