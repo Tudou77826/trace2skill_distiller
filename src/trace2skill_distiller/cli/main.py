@@ -17,7 +17,7 @@ from ..core.console import console
 from ..llm import LLMClient
 from ..llm.providers.openai_compatible import OpenAICompatibleProvider
 from ..mining.mining_facade import DefaultMiningLayer
-from ..mining.sources.opencode import OpenCodeSource
+from ..mining.sources import create_source
 from ..orchestrator.pipeline import DistillPipeline
 
 
@@ -69,6 +69,9 @@ def cli():
 @click.option("--base-url", prompt="Base URL", help="LLM API 基础地址（如 https://api.openai.com/v1）")
 @click.option("--fast-model", default="openai/gpt-oss-120b", help="快速模型（用于 L1/L2 预处理）")
 @click.option("--strong-model", default="openai/gpt-oss-120b", help="强力模型（用于蒸馏和合并）")
+@click.option("--source", "source_type",
+              type=click.Choice(["opencode", "chrys"], case_sensitive=False),
+              default="opencode", help="数据源类型（Coding Agent）")
 @click.option("--proxy", default="", help="代理地址（如 socks5://127.0.0.1:1080）")
 @click.option("--proxy-bypass", default="", help="不走代理的 host 正则，逗号分隔（如 localhost,127\\.0\\.0\\.1）")
 @click.option("--verify-ssl/--no-verify-ssl", default=False, help="是否验证 SSL 证书")
@@ -76,6 +79,7 @@ def cli():
 @click.option("--connect-timeout", type=float, default=10.0, help="连接超时（秒）")
 def init(
     api_key: str, base_url: str, fast_model: str, strong_model: str,
+    source_type: str,
     proxy: str, proxy_bypass: str, verify_ssl: bool,
     timeout: float, connect_timeout: float,
 ):
@@ -88,12 +92,14 @@ def init(
         api_key, base_url, fast_model, strong_model,
         proxy=proxy, proxy_bypass=proxy_bypass,
         verify_ssl=verify_ssl, timeout=timeout, connect_timeout=connect_timeout,
+        source_type=source_type,
     )
     console.print(Panel(
         f"Config created: {path}\n"
         f"API key saved to: {path.parent / '.env'}\n"
         f"Fast model: {fast_model}\n"
-        f"Strong model: {strong_model}",
+        f"Strong model: {strong_model}\n"
+        f"Source: {source_type}",
         title="Trace2Skill Initialized",
     ))
 
@@ -166,7 +172,7 @@ def inspect(session_id: str):
     fast_provider = OpenAICompatibleProvider(config.fast_model)
     fast_llm = LLMClient(fast_provider)
 
-    source = OpenCodeSource(config.opencode.db_path, config.opencode.export_command)
+    source = create_source(config.source)
     from ..mining.preprocess.pipeline import run_pipeline
 
     console.print(f"Inspecting session [cyan]{session_id}[/]...")
@@ -295,6 +301,13 @@ def config_show():
     console.print(_format_llm_panel("Fast Model", cfg.fast_model))
     console.print()
     console.print(_format_llm_panel("Strong Model", cfg.strong_model))
+    console.print()
+    console.print(Panel(
+        f"type: {cfg.source.type}\n"
+        f"opencode.db_path: {cfg.source.opencode.db_path}\n"
+        f"chrys.sessions_dir: {cfg.source.chrys.sessions_dir or '(auto-detect)'}",
+        title="Source",
+    ))
 
 
 @config.command("set")

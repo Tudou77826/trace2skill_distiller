@@ -52,6 +52,17 @@ class OpenCodeConfig(BaseModel):
     export_command: str = "opencode export"
 
 
+class ChrysConfig(BaseModel):
+    sessions_dir: str = ""  # empty = auto-detect per platform
+
+
+class SourceConfig(BaseModel):
+    """Data source configuration — selects which Coding Agent to mine from."""
+    type: str = "opencode"  # opencode | chrys
+    opencode: OpenCodeConfig = Field(default_factory=OpenCodeConfig)
+    chrys: ChrysConfig = Field(default_factory=ChrysConfig)
+
+
 class DistillFilter(BaseModel):
     min_messages: int = 5
     min_tools: int = 3
@@ -69,6 +80,7 @@ class OutputConfig(BaseModel):
     """Configuration for the output layer."""
     skill_output_dir: str = "~/.trace2skill/skills"
     max_rules_per_skill: int = 15
+    format: str = "skill_md"  # skill_md | knowledge_md
 
 
 class SchedulerConfig(BaseModel):
@@ -87,7 +99,7 @@ class SchedulerConfig(BaseModel):
 class DistillConfig(BaseModel):
     fast_model: LLMConfig = Field(default_factory=LLMConfig)
     strong_model: LLMConfig = Field(default_factory=LLMConfig)
-    opencode: OpenCodeConfig = Field(default_factory=OpenCodeConfig)
+    source: SourceConfig = Field(default_factory=SourceConfig)
     filter: DistillFilter = Field(default_factory=DistillFilter)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
@@ -113,48 +125,68 @@ class DistillConfig(BaseModel):
         env_strong = os.getenv("TRACE2SKILL_STRONG_MODEL")
         env_verify_ssl = os.getenv("TRACE2SKILL_VERIFY_SSL")
         env_proxy = os.getenv("TRACE2SKILL_PROXY")
+        env_proxy_bypass = os.getenv("TRACE2SKILL_PROXY_BYPASS")
+        env_timeout = os.getenv("TRACE2SKILL_TIMEOUT")
+        env_connect_timeout = os.getenv("TRACE2SKILL_CONNECT_TIMEOUT")
+        env_source_type = os.getenv("TRACE2SKILL_SOURCE")
 
         models = raw.get("models", {})
         fast_data = models.get("fast", {})
         strong_data = models.get("strong", {})
 
-        # Build fast model from YAML with full field coverage
-        fast_model = LLMConfig.from_yaml(fast_data)
-        # Apply environment variable overlay
-        fast_overrides: dict = {}
+        # Shared env overrides — apply to both models
+        shared_overrides: dict = {}
         if env_key:
-            fast_overrides["api_key"] = env_key
+            shared_overrides["api_key"] = env_key
         if env_url:
-            fast_overrides["base_url"] = env_url
+            shared_overrides["base_url"] = env_url
+        if env_proxy:
+            shared_overrides["proxy"] = env_proxy
+        if env_proxy_bypass:
+            shared_overrides["proxy_bypass"] = env_proxy_bypass
+        if env_timeout:
+            shared_overrides["timeout"] = float(env_timeout)
+        if env_connect_timeout:
+            shared_overrides["connect_timeout"] = float(env_connect_timeout)
+        if env_verify_ssl is not None:
+            shared_overrides["verify_ssl"] = env_verify_ssl.lower() == "true"
+
+        # Build fast model
+        fast_model = LLMConfig.from_yaml(fast_data)
+        fast_overrides = {**shared_overrides}
         if env_fast:
             fast_overrides["model"] = env_fast
-        if env_verify_ssl is not None:
-            fast_overrides["verify_ssl"] = env_verify_ssl.lower() == "true"
-        if env_proxy:
-            fast_overrides["proxy"] = env_proxy
         if fast_overrides:
             fast_model = fast_model.model_copy(update=fast_overrides)
 
         # Build strong model with fast as fallback defaults
         strong_model = LLMConfig.from_yaml(strong_data, defaults=fast_model)
-        strong_overrides: dict = {}
-        if env_key:
-            strong_overrides["api_key"] = env_key
-        if env_url:
-            strong_overrides["base_url"] = env_url
+        strong_overrides = {**shared_overrides}
         if env_strong:
             strong_overrides["model"] = env_strong
         if strong_overrides:
             strong_model = strong_model.model_copy(update=strong_overrides)
 
-        oc = raw.get("opencode", {})
         fl = raw.get("filter", {})
         sched = raw.get("scheduler", {})
+
+        # Source config — backward compatible with old `opencode:` top-level key
+        src_raw = raw.get("source", {})
+        if not src_raw and raw.get("opencode"):
+            # Migrate old format: opencode.db_path → source.opencode.db_path
+            src_raw = {"type": "opencode", "opencode": raw["opencode"]}
+        src_type = env_source_type or src_raw.get("type", "opencode")
+        src_opencode = OpenCodeConfig(**src_raw.get("opencode", {}))
+        src_chrys = ChrysConfig(**src_raw.get("chrys", {}))
 
         return cls(
             fast_model=fast_model,
             strong_model=strong_model,
-            opencode=OpenCodeConfig(**oc),
+            source=SourceConfig(
+                type=src_type,
+                opencode=src_opencode,
+                chrys=src_chrys,
+            ),
             filter=DistillFilter(**fl),
             scheduler=SchedulerConfig(**sched),
             analysis=AnalysisConfig(
@@ -179,6 +211,7 @@ def init_default_config(
     verify_ssl: bool = False,
     timeout: float = 120.0,
     connect_timeout: float = 10.0,
+    source_type: str = "opencode",
 ) -> Path:
     """Create default config.yaml with provided credentials."""
     config_dir = Path.home() / ".trace2skill"
@@ -202,13 +235,16 @@ def init_default_config(
         fast_cfg["connect_timeout"] = connect_timeout
         strong_cfg["connect_timeout"] = connect_timeout
 
-    config = {
+    config: dict = {
         "models": {
             "fast": fast_cfg,
             "strong": strong_cfg,
         },
-        "opencode": {
-            "db_path": "~/.local/share/opencode/opencode.db",
+        "source": {
+            "type": source_type,
+            "opencode": {
+                "db_path": "~/.local/share/opencode/opencode.db",
+            },
         },
         "filter": {
             "min_messages": 5,
@@ -254,6 +290,10 @@ _CONFIG_KEY_MAP: dict[str, tuple[list[str], type]] = {
     "strong.timeout": (["models", "strong", "timeout"], float),
     "strong.connect_timeout": (["models", "strong", "connect_timeout"], float),
     "strong.user_agent": (["models", "strong", "user_agent"], str),
+    "source.type": (["source", "type"], str),
+    "source.opencode.db_path": (["source", "opencode", "db_path"], str),
+    "source.opencode.export_command": (["source", "opencode", "export_command"], str),
+    "source.chrys.sessions_dir": (["source", "chrys", "sessions_dir"], str),
 }
 
 

@@ -8,114 +8,67 @@ from ...core.utils import estimate_tokens, truncate_to_token_budget
 from ...mining.types import TrajectorySummary
 from ..types import TopicCluster, TopicSkill, SkillRule
 
-DISTILL_SYSTEM = """你是一个高级软件工程师，擅长从开发轨迹中提炼可复用的最佳实践。
-请分析提供的成功和失败轨迹，提炼出 Skill。"""
+DISTILL_SYSTEM = """你是一个高级软件工程师，擅长从开发轨迹中提炼可直接复用的知识点。
+你的核心产出是 rules — 每条 rule 必须具体、可操作、有价值，读者可以直接拿去用。"""
 
-DISTILL_PROMPT = """## 背景
-正在分析主题「{topic_name}」相关的开发轨迹。
-主题描述: {topic_summary}
+DISTILL_PROMPT = """## 输入轨迹
 
-## 成功轨迹 (T+)
+主题：{topic_name}
+描述：{topic_summary}
+
+### 成功轨迹 (T+)
 {t_plus}
 
-## 失败/问题轨迹 (T-)
+### 失败/问题轨迹 (T-)
 {t_minus}
 
-## 任务
-基于以上轨迹，提炼出关于「{topic_name}」的可复用技能。
+## 输出要求
 
-### Step 1: 判断技能类型
-先判断这个技能属于哪种类型：
-- **procedure**: 操作流程（安装/部署/配置等有明确步骤的任务）
-- **knowledge**: 业务理解（架构调研、项目结构理解等知识性内容）
-- **checklist**: 注意事项（调试/排障/安全等规则性内容）
-- **troubleshooting**: 调试排障（特定问题的解决路径）
-- **reference**: 工具参考（配置项说明、API 用法等）
+从轨迹中提炼可直接复用的知识点，输出 JSON。
 
-### Step 2: 生成 description（英文）
-description 写法要求：
-- **必须用英文**
-- 格式: "[What it does]. Use when [scenario 1], [scenario 2], or [scenario 3]."
-- 不要写 "helps users" 这种废话
-- 必须包含具体触发词，便于 AI Agent 自动发现匹配
-- 限 200 字符
+### rules — 核心产出，必须认真对待
 
-好例子: "Install oh-my-opencode CLI with correct model flags. Use when deploying opencode, setting up subscriptions (Claude/OpenAI/Gemini), or configuring z.ai.codingplan."
-坏例子: "帮助用户在 CLI 环境中安装 oh-my-opencode 并配置模型参数。"
+每条 rule 是一个独立的、可直接复用的知识点。读者看到就能直接用，不需要再看其他内容。
 
-### Step 3: 生成 body（Markdown 正文，不含 frontmatter）
-根据技能类型，用对应格式输出 body：
+规则类型：
+- **ALWAYS**: 成功经验，总是应该这样做。action 写具体做法。
+- **WHEN_THEN**: 条件经验，满足某条件时执行某动作。condition 写触发条件，action 写具体做法。
+- **NEVER**: 失败教训，永远不要这样做。action 写不该做的事。
+- **AVOID**: 踩过的坑，尽量避免。action 写要避免的事。
+- **FACT**: 探索中发现的事实认知。action 写具体事实（文件路径、数据格式、架构关系、配置细节等）。condition 留空。
 
-**procedure 类型：**
-## 步骤
-1. 第一步描述
-2. 第二步描述
-...
-## 注意事项
-- ...
+rules 质量要求：
+- action 必须具体，包含可操作的细节（路径、命令、参数、代码片段等）
+- 不要写"应该检查XXX"这种空话，要写具体的路径、文件名、字段名、命令等
+- FACT 类型的 action 必须保留原始 Discoveries 中的具体细节，不要泛化、不要总结成一句话
+- 每条 FACT 只描述一个事实，不要合并多个事实
+- scope 为 project-specific 时 confidence 应相应提高
 
-**knowledge 类型：**
-## 核心概念
-...
-## 关键关系
-...
-## 要点
-- ...
+### 其他字段
 
-**checklist 类型：**
-## MUST
-- ...
-## WHEN → THEN
-- ...
-## NEVER
-- ...
+- **skill_title**: 中文标题，简洁准确
+- **skill_type**: procedure|knowledge|checklist|troubleshooting|reference
+- **description**: 英文，格式 "[What it does]. Use when [trigger scenarios]."，限 200 字符
+- **summary**: 中文，2-3 句概述
+- **body**: 可选的补充 Markdown（如排查步骤、示例代码等）。如果 rules 已经完整则留空。
 
-**troubleshooting 类型：**
-## 常见问题
-### 问题 1: ...
-排查路径: ...
-解决方案: ...
-
-**reference 类型：**
-## 配置项
-| 参数 | 说明 | 默认值 |
-...
-## 示例
-...
-## 注意事项
-- ...
-
-body 内容要求：
-- 不要出现 session ID、来源元信息等对消费方无用的内容
-- 直接写可操作的知识，不要写"从轨迹中分析得出"之类的元描述
-- 正文用中文，但标题和关键术语可用英文
-
-### Step 4: 生成 rules（用于统计报告）
-每条规则类型：
-- **ALWAYS**: 总是应该这样做（来自 T+ 的共识模式）
-- **WHEN_THEN**: 当满足某条件时，执行某动作（来自 T+ 的条件模式）
-- **NEVER**: 永远不要这样做（来自 T- 的失败教训）
-- **AVOID**: 尽量避免这样做（来自 T- 的问题模式）
-
-rules 用于内部统计报告，不需要写得太长。body 已经包含了完整内容。
-
-严格输出 JSON：
+### 严格输出 JSON：
 {{
   "skill_title": "技能标题（中文）",
   "skill_type": "procedure|knowledge|checklist|troubleshooting|reference",
-  "description": "English description with specific trigger words (max 200 chars)",
+  "description": "English description with trigger words (max 200 chars)",
   "summary": "中文概述（2-3 句）",
   "rules": [
     {{
       "id": "rule_xxx",
-      "type": "ALWAYS|WHEN_THEN|NEVER|AVOID",
-      "condition": "触发条件（WHEN_THEN 类型必填，其他为空）",
-      "action": "应该做什么 / 不应该做什么",
+      "type": "ALWAYS|WHEN_THEN|NEVER|AVOID|FACT",
+      "condition": "触发条件（仅 WHEN_THEN 填写，其他留空）",
+      "action": "具体的知识点内容",
       "confidence": 0.8,
       "scope": "general|project-specific|language-specific"
     }}
   ],
-  "body": "完整的 Markdown 正文（根据 skill_type 选择对应格式，不含 YAML frontmatter）"
+  "body": "补充 Markdown（可选，可为空字符串）"
 }}"""
 
 
@@ -231,6 +184,11 @@ def _format_trajectories(trajectories: list[TrajectorySummary]) -> str:
 
         if t.lessons_learned:
             entry += "Lessons: " + "; ".join(t.lessons_learned) + "\n"
+
+        if t.discoveries:
+            entry += "Discoveries:\n"
+            for d in t.discoveries:
+                entry += f"  - {d}\n"
 
         parts.append(entry)
 

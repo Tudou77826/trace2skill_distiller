@@ -25,3 +25,4 @@ class RuleType(str, Enum):
     WHEN_THEN = "WHEN_THEN"
     NEVER = "NEVER"
     AVOID = "AVOID"
+    FACT = "FACT"

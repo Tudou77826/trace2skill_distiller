@@ -6,6 +6,8 @@ from .config import (
     AnalysisConfig,
     OutputConfig,
     OpenCodeConfig,
+    ChrysConfig,
+    SourceConfig,
     DistillFilter,
     SchedulerConfig,
     init_default_config,

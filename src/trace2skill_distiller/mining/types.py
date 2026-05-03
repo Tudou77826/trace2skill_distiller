@@ -299,6 +299,7 @@ class TrajectorySummary(BaseModel):
     problems_encountered: list[ProblemRecord] = Field(default_factory=list)
     key_decisions: list[DecisionRecord] = Field(default_factory=list)
     lessons_learned: list[str] = Field(default_factory=list)
+    discoveries: list[str] = Field(default_factory=list)
 
     label: str = ""
     label_score: float = 0.0

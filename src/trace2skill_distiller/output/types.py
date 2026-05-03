@@ -33,7 +33,9 @@ class TopicEntry(BaseModel):
     session_ids: list[str] = Field(default_factory=list)
     rule_count: int = 0
     skill_title: str = ""
+    skill_type: str = ""
     description: str = ""
+    body: str = ""
     rules: list[SkillRule] = Field(default_factory=list)
     output_path: str = ""
 

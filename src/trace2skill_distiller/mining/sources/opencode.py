@@ -123,7 +123,35 @@ class OpenCodeSource:
 
     @staticmethod
     def _find_opencode() -> str:
-        """Find the opencode binary."""
+        """Find the opencode binary.
+
+        Strategy: npm prefix -g dynamic lookup → hardcoded candidates → bare fallback.
+        """
+        import shutil
+        import sys
+
+        # 1. Try npm global prefix to locate the binary dynamically
+        npm_bin = shutil.which("npm")
+        if npm_bin:
+            try:
+                result = subprocess.run(
+                    [npm_bin, "prefix", "-g"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if result.returncode == 0:
+                    prefix = Path(result.stdout.strip())
+                    if sys.platform == "win32":
+                        candidate = prefix / "opencode.cmd"
+                    else:
+                        candidate = prefix / "bin" / "opencode"
+                    if candidate.exists():
+                        return str(candidate)
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                pass
+
+        # 2. Hardcoded candidates as fallback
         candidates = [
             Path.home() / "AppData" / "Roaming" / "npm" / "opencode.cmd",
             Path.home() / "AppData" / "Roaming" / "npm" / "opencode",
@@ -133,4 +161,6 @@ class OpenCodeSource:
         for c in candidates:
             if c.exists():
                 return str(c)
+
+        # 3. Bare fallback, rely on system PATH
         return "opencode"

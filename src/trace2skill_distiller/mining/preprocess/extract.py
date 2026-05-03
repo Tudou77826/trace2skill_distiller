@@ -126,6 +126,9 @@ BLOCK_EXTRACT_PROMPT = """分析以下开发会话片段：
   "key_decisions": [
     {{"decision": "做了什么决策", "rationale": "为什么"}}
   ],
+  "discoveries": [
+    "探索过程中发现的具体事实：文件路径、数据格式、架构关系、配置细节、API用法等客观认知"
+  ],
   "outcome": "success|partial|failure"
 }}"""
 
@@ -178,6 +181,7 @@ AGGREGATE_PROMPT = """以下是一个开发会话各阶段的分析结果：
     {{"decision": "决策内容", "rationale": "原因", "outcome": "结果"}}
   ],
   "lessons_learned": ["从整个过程中学到的经验"],
+  "discoveries": ["保留各阶段发现的具体事实：文件路径、数据格式、架构关系、配置细节、API用法等。去重合并，保留最具体准确的描述"],
   "success_indicators": ["表明成功的信号"],
   "failure_indicators": ["表明遇到问题的信号"],
   "overall_outcome": "success|partial|failure"
@@ -237,6 +241,7 @@ def aggregate_session_summary(
         problems_encountered=problems,
         key_decisions=decisions,
         lessons_learned=result.get("lessons_learned", []),
+        discoveries=result.get("discoveries", []),
         label=label,
         label_score=score,
     )

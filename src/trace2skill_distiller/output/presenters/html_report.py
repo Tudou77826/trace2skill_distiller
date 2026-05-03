@@ -128,25 +128,65 @@ def _render_topic_cards(report: DistillReport) -> str:
             conf_pct = f"{r.confidence * 100:.0f}%"
             conf_col = _score_color(r.confidence)
             type_cls = f"rule-type rule-type-{r.type.lower().replace('_', '-')}"
+
+            details_lines = []
+            if r.condition:
+                details_lines.append(f"<div class=\"rule-detail\"><strong>When:</strong> {html_mod.escape(r.condition)}</div>")
+            if r.scope and r.scope != "general":
+                details_lines.append(f"<div class=\"rule-detail\"><strong>Scope:</strong> {html_mod.escape(r.scope)}</div>")
+            if r.evidence_from_success:
+                evidence = "; ".join(r.evidence_from_success)
+                details_lines.append(f"<div class=\"rule-detail rule-evidence-ok\"><strong>Success:</strong> {html_mod.escape(evidence)}</div>")
+            if r.evidence_from_failure:
+                evidence = "; ".join(r.evidence_from_failure)
+                details_lines.append(f"<div class=\"rule-detail rule-evidence-fail\"><strong>Failure:</strong> {html_mod.escape(evidence)}</div>")
+            details_html = "".join(details_lines)
+
             rule_items.append(
                 f'<div class="rule-item">'
+                f'<div class="rule-header">'
                 f'<span class="{type_cls}">{html_mod.escape(r.type)}</span> '
-                f'<span class="rule-action">{html_mod.escape(r.action[:80])}</span>'
-                f'<div class="mini-bar"><div class="mini-fill" style="width:{conf_pct};background:{conf_col}"></div></div>'
+                f'<span class="rule-action">{html_mod.escape(r.action)}</span>'
+                f'<span class="rule-conf" style="color:{conf_col}">{conf_pct}</span>'
+                f"</div>"
+                f"{details_html}"
                 f"</div>"
             )
 
         rules_html = "".join(rule_items) if rule_items else '<span class="empty">无规则</span>'
 
+        # Body section — convert markdown-like content to basic HTML
+        body_html = ""
+        if t.body:
+            body_escaped = html_mod.escape(t.body)
+            # Basic markdown → HTML: headers, bold, lists
+            import re
+            body_escaped = re.sub(r"^### (.+)$", r"<h4>\1</h4>", body_escaped, flags=re.MULTILINE)
+            body_escaped = re.sub(r"^## (.+)$", r"<h4>\1</h4>", body_escaped, flags=re.MULTILINE)
+            body_escaped = re.sub(r"^\- (.+)$", r"<li>\1</li>", body_escaped, flags=re.MULTILINE)
+            body_escaped = re.sub(r"^\* (.+)$", r"<li>\1</li>", body_escaped, flags=re.MULTILINE)
+            body_escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", body_escaped)
+            body_html = f'<div class="topic-body">{body_escaped}</div>'
+
+        # Description tag
+        desc_html = ""
+        if t.description:
+            desc_html = f'<p class="topic-description">{html_mod.escape(t.description)}</p>'
+
+        type_badge = f'<span class="badge">{html_mod.escape(t.skill_type)}</span>' if t.skill_type else ""
+
         cards.append(
             f'<div class="topic-card" id="topic-{html_mod.escape(t.topic_id)}">'
             f'<div class="topic-header">'
-            f'<h3>{html_mod.escape(t.topic_name)}</h3>'
-            f'<span class="badge">{t.session_count} 个会话</span>'
-            f'<span class="badge">{t.rule_count} 条规则</span>'
+            f'<h3>{html_mod.escape(t.skill_title or t.topic_name)}</h3>'
+            f'{type_badge}'
+            f'<span class="badge">{t.session_count} sessions</span>'
+            f'<span class="badge">{t.rule_count} rules</span>'
             f"</div>"
+            f"{desc_html}"
             f'<p class="topic-summary">{html_mod.escape(t.topic_summary)}</p>'
             f'<div class="topic-rules">{rules_html}</div>'
+            f"{body_html}"
             f"</div>"
         )
 
@@ -497,7 +537,43 @@ body {{
   font-size: 14px;
 }}
 .rule-item:last-child {{ border-bottom: none; }}
+.rule-header {{ display: flex; align-items: center; gap: 8px; }}
 .rule-action {{ flex: 1; color: var(--text); }}
+.rule-conf {{ font-size: 12px; font-weight: 600; white-space: nowrap; }}
+.rule-detail {{ font-size: 13px; color: var(--text2); padding: 2px 0 2px 24px; line-height: 1.5; }}
+.rule-detail strong {{ color: var(--text); font-weight: 500; }}
+.rule-evidence-ok {{ color: var(--success); }}
+.rule-evidence-ok strong {{ color: var(--success); }}
+.rule-evidence-fail {{ color: var(--danger); }}
+.rule-evidence-fail strong {{ color: var(--danger); }}
+.topic-description {{
+  font-size: 13px;
+  color: var(--primary);
+  margin-bottom: 4px;
+  font-style: italic;
+}}
+.topic-body {{
+  margin-top: 12px;
+  padding: 16px;
+  background: var(--surface2);
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--text);
+}}
+.topic-body h4 {{
+  font-size: 15px;
+  font-weight: 600;
+  margin: 12px 0 6px 0;
+  color: var(--text);
+}}
+.topic-body li {{
+  margin-left: 20px;
+  margin-bottom: 4px;
+}}
+.topic-body strong {{
+  color: var(--primary);
+}}
 .rule-type {{
   font-size: 11px;
   font-weight: 600;
@@ -510,6 +586,7 @@ body {{
 .rule-type-when-then {{ background: var(--primary-bg); color: var(--primary); }}
 .rule-type-never {{ background: var(--danger-bg); color: var(--danger); }}
 .rule-type-avoid {{ background: var(--warning-bg); color: var(--warning); }}
+.rule-type-fact {{ background: #e8eaf6; color: #3949ab; }}
 .timeline-row {{
   display: flex;
   align-items: center;

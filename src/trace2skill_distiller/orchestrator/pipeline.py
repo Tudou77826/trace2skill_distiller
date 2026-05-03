@@ -15,7 +15,7 @@ from ..core.console import console
 from ..llm import LLMClient
 from ..llm.providers.openai_compatible import OpenAICompatibleProvider
 from ..mining.mining_facade import MiningLayer, DefaultMiningLayer
-from ..mining.sources.opencode import OpenCodeSource
+from ..mining.sources import create_source
 from ..mining.types import SessionMeta, TrajectorySummary
 from ..analysis.analysis_facade import AnalysisLayer, DefaultAnalysisLayer
 from ..analysis.clustering.semantic import SemanticClusterStrategy
@@ -212,7 +212,9 @@ class DistillPipeline:
                 session_ids=s.source_sessions,
                 rule_count=len(s.rules),
                 skill_title=s.skill_title,
+                skill_type=s.skill_type,
                 description=s.description,
+                body=s.body,
                 rules=s.rules,
             ))
 
@@ -271,7 +273,7 @@ class DistillPipeline:
         strong_llm = LLMClient(strong_provider)
 
         # Build mining layer
-        source = OpenCodeSource(config.opencode.db_path, config.opencode.export_command)
+        source = create_source(config.source)
         mining = DefaultMiningLayer(source, fast_llm, config)
 
         # Build analysis layer
@@ -284,10 +286,11 @@ class DistillPipeline:
 
         # Build output layer
         output = DefaultOutputLayer(
-            SkillMdFormatter(merge_llm=fast_llm, max_rules=config.output.max_rules_per_skill),
-            HtmlReportPresenter(),
-            StateManager(),
-            config.output,
+            formatter=SkillMdFormatter(
+                merge_llm=fast_llm,
+                max_rules=config.output.max_rules_per_skill,
+            ),
+            config=config.output,
         )
 
         return cls(mining, analysis, output, fast_llm, strong_llm, config)
