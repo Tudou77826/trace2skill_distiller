@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 import httpx
 
 from ..transport import ProxyBypassTransport
@@ -26,6 +28,7 @@ class OpenAICompatibleProvider:
         self._model = config.model
         self._base_url = config.base_url.rstrip("/")
         self._max_tokens = config.max_tokens
+        self._lock = threading.Lock()
         self.total_input_tokens = 0
         self.total_output_tokens = 0
         self.call_count = 0
@@ -110,9 +113,10 @@ class OpenAICompatibleProvider:
         usage = data.get("usage", {})
         input_tokens = usage.get("prompt_tokens", 0)
         output_tokens = usage.get("completion_tokens", 0)
-        self.total_input_tokens += input_tokens
-        self.total_output_tokens += output_tokens
-        self.call_count += 1
+        with self._lock:
+            self.total_input_tokens += input_tokens
+            self.total_output_tokens += output_tokens
+            self.call_count += 1
 
         choices = data.get("choices", [])
         if not choices:
@@ -137,12 +141,13 @@ class OpenAICompatibleProvider:
 
     def reset_stats(self) -> dict:
         """Reset and return accumulated usage stats."""
-        stats = {
-            "calls": self.call_count,
-            "input_tokens": self.total_input_tokens,
-            "output_tokens": self.total_output_tokens,
-        }
-        self.total_input_tokens = 0
-        self.total_output_tokens = 0
-        self.call_count = 0
+        with self._lock:
+            stats = {
+                "calls": self.call_count,
+                "input_tokens": self.total_input_tokens,
+                "output_tokens": self.total_output_tokens,
+            }
+            self.total_input_tokens = 0
+            self.total_output_tokens = 0
+            self.call_count = 0
         return stats

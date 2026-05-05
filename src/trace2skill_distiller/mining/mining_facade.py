@@ -54,10 +54,12 @@ class DefaultMiningLayer:
             self._min_messages = config.filter.min_messages
             self._min_tools = config.filter.min_tools
             self._distill_config = config
+            self._max_workers = config.concurrency.workers
         else:
             self._min_messages = 5
             self._min_tools = 3
             self._distill_config = None
+            self._max_workers = 1
 
     def list_available(
         self,
@@ -88,4 +90,5 @@ class DefaultMiningLayer:
             self._llm,
             self._source,
             self._distill_config,
+            max_workers=self._max_workers,
         )

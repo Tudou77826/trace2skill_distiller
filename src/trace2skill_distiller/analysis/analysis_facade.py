@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from ..llm import LLMClient
-from ..core.config import AnalysisConfig
+from ..core.config import AnalysisConfig, DistillConfig
 from ..mining.types import TrajectorySummary
 from .types import TopicCluster, ClusteringResult, TopicSkill, AnalysisResult
 from .clustering.base import ClusterStrategy
@@ -36,10 +36,12 @@ class DefaultAnalysisLayer:
         cluster_strategy: ClusterStrategy,
         distill_strategy: DistillationStrategy,
         config: AnalysisConfig | None = None,
+        max_workers: int = 1,
     ):
         self._cluster = cluster_strategy
         self._distill = distill_strategy
         self._config = config or AnalysisConfig()
+        self._max_workers = max_workers
 
     def analyze(
         self,
@@ -57,6 +59,7 @@ class DefaultAnalysisLayer:
         skills = self._distill.distill_all(
             trajectories,
             clustering.clusters,
+            max_workers=self._max_workers,
         )
 
         return AnalysisResult(

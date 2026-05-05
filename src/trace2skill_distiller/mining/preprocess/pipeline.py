@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from rich.progress import (
     Progress,
     BarColumn,
@@ -23,6 +26,8 @@ from .extract import (
     extract_block_summary,
     aggregate_session_summary,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def run_pipeline(
@@ -79,9 +84,13 @@ def run_batch(
     fast_llm: LLMClient,
     source: SessionSource,
     config: DistillConfig | None = None,
+    *,
+    max_workers: int = 1,
 ) -> list[TrajectorySummary]:
-    """Run pipeline on multiple sessions."""
-    results = []
+    """Run pipeline on multiple sessions, optionally in parallel."""
+    results: list[TrajectorySummary] = []
+    desc = f"Preprocessing [{max_workers}w]" if max_workers > 1 else "Preprocessing"
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[bold]{task.description}"),
@@ -91,13 +100,41 @@ def run_batch(
         TimeRemainingColumn(),
         console=console,
     ) as progress:
-        task = progress.add_task("Preprocessing", total=len(session_ids))
-        for sid in session_ids:
-            try:
-                result = run_pipeline(sid, fast_llm, source, config, quiet=True)
-                if result:
-                    results.append(result)
-            except Exception:
-                pass
-            progress.advance(task)
+        task = progress.add_task(desc, total=len(session_ids))
+
+        if max_workers <= 1:
+            # Sequential mode
+            for sid in session_ids:
+                try:
+                    result = run_pipeline(sid, fast_llm, source, config, quiet=True)
+                    if result:
+                        results.append(result)
+                except Exception as e:
+                    logger.warning("Session %s failed: %s", sid, e)
+                progress.advance(task)
+        else:
+            # Parallel mode
+            logger.info("Starting parallel preprocessing with %d workers", max_workers)
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {}
+                for sid in session_ids:
+                    future = pool.submit(
+                        run_pipeline, sid, fast_llm, source, config, quiet=True,
+                    )
+                    futures[future] = sid
+
+                for future in as_completed(futures):
+                    sid = futures[future]
+                    try:
+                        result = future.result()
+                        if result:
+                            results.append(result)
+                    except Exception as e:
+                        logger.warning("Session %s failed: %s", sid, e)
+                    progress.advance(task)
+
+    logger.info(
+        "Preprocessing done: %d/%d sessions produced results",
+        len(results), len(session_ids),
+    )
     return results

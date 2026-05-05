@@ -30,6 +30,8 @@ class DistillationStrategy(Protocol):
         self,
         trajectories: list[TrajectorySummary],
         clusters: list[TopicCluster],
+        *,
+        max_workers: int = 1,
     ) -> list[TopicSkill]:
         """Distill all topic clusters."""
         ...

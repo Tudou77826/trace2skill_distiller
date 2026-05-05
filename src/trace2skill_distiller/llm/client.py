@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from typing import Any, Optional
 
@@ -34,6 +35,7 @@ class LLMClient:
         else:
             self._provider = provider_or_config
         self._max_retries = max_retries
+        self._lock = threading.Lock()
         self.total_input_tokens = 0
         self.total_output_tokens = 0
         self.call_count = 0
@@ -73,9 +75,10 @@ class LLMClient:
                 ) from e
 
         # Track usage
-        self.total_input_tokens += response.usage.input_tokens
-        self.total_output_tokens += response.usage.output_tokens
-        self.call_count += 1
+        with self._lock:
+            self.total_input_tokens += response.usage.input_tokens
+            self.total_output_tokens += response.usage.output_tokens
+            self.call_count += 1
 
         return response.content
 
@@ -129,14 +132,15 @@ class LLMClient:
 
     def reset_stats(self) -> dict[str, int]:
         """Reset and return accumulated stats."""
-        stats = {
-            "calls": self.call_count,
-            "input_tokens": self.total_input_tokens,
-            "output_tokens": self.total_output_tokens,
-        }
-        self.total_input_tokens = 0
-        self.total_output_tokens = 0
-        self.call_count = 0
+        with self._lock:
+            stats = {
+                "calls": self.call_count,
+                "input_tokens": self.total_input_tokens,
+                "output_tokens": self.total_output_tokens,
+            }
+            self.total_input_tokens = 0
+            self.total_output_tokens = 0
+            self.call_count = 0
         return stats
 
     def close(self) -> None:

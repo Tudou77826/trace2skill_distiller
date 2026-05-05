@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from rich.progress import (
     Progress,
     BarColumn,
@@ -17,6 +20,8 @@ from ...core.console import console
 from ...core.utils import estimate_tokens, truncate_to_token_budget
 from ...mining.types import TrajectorySummary
 from ..types import TopicCluster, TopicSkill, SkillRule
+
+logger = logging.getLogger(__name__)
 
 DISTILL_SYSTEM = """你是一个高级软件工程师，擅长从开发轨迹中提炼可直接复用的知识点。
 你的核心产出是 rules — 每条 rule 必须具体、可操作、有价值，读者可以直接拿去用。"""
@@ -154,8 +159,12 @@ class LLMDistillationStrategy:
         self,
         trajectories: list[TrajectorySummary],
         clusters: list[TopicCluster],
+        *,
+        max_workers: int = 1,
     ) -> list[TopicSkill]:
-        skills = []
+        skills: list[TopicSkill] = []
+        desc = f"Distilling [{max_workers}w]" if max_workers > 1 else "Distilling"
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[bold]{task.description}"),
@@ -165,15 +174,39 @@ class LLMDistillationStrategy:
             TimeRemainingColumn(),
             console=console,
         ) as progress:
-            task = progress.add_task("Distilling topics", total=len(clusters))
-            for cluster in clusters:
-                try:
-                    skill = self.distill_topic(trajectories, cluster)
-                    if skill and (skill.rules or skill.body):
-                        skills.append(skill)
-                except Exception:
-                    pass
-                progress.advance(task)
+            task = progress.add_task(desc, total=len(clusters))
+
+            if max_workers <= 1:
+                for cluster in clusters:
+                    try:
+                        skill = self.distill_topic(trajectories, cluster)
+                        if skill and (skill.rules or skill.body):
+                            skills.append(skill)
+                    except Exception as e:
+                        logger.warning("Topic %s failed: %s", cluster.topic_name, e)
+                    progress.advance(task)
+            else:
+                logger.info("Starting parallel distillation with %d workers", max_workers)
+                with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                    futures = {}
+                    for cluster in clusters:
+                        future = pool.submit(self.distill_topic, trajectories, cluster)
+                        futures[future] = cluster.topic_name
+
+                    for future in as_completed(futures):
+                        topic_name = futures[future]
+                        try:
+                            skill = future.result()
+                            if skill and (skill.rules or skill.body):
+                                skills.append(skill)
+                        except Exception as e:
+                            logger.warning("Topic %s failed: %s", topic_name, e)
+                        progress.advance(task)
+
+        logger.info(
+            "Distillation done: %d/%d topics produced skills",
+            len(skills), len(clusters),
+        )
         return skills
 
 

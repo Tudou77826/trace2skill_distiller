@@ -309,6 +309,7 @@ class DistillPipeline:
             SemanticClusterStrategy(fast_llm, output_dir),
             LLMDistillationStrategy(strong_llm),
             config.analysis,
+            max_workers=config.concurrency.workers,
         )
 
         # Build output layer

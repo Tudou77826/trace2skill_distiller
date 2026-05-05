@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import time
@@ -22,6 +23,16 @@ from ..mining.sources import create_source
 from ..orchestrator.pipeline import DistillPipeline
 
 
+def _setup_logging() -> None:
+    """Configure package-level logging to stderr."""
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+        stream=sys.stderr,
+    )
+
+
 def _load_config() -> DistillConfig:
     """Load config, ensuring .env is sourced if present."""
     env_file = Path.home() / ".trace2skill" / ".env"
@@ -37,7 +48,8 @@ def _load_config() -> DistillConfig:
 
 @click.group()
 @click.version_option("0.1.0")
-def cli():
+@click.option("--verbose", "-v", is_flag=True, help="显示详细日志（INFO 级别）")
+def cli(verbose: bool):
     """Trace2Skill Distiller — 从 Coding Agent 会话轨迹中蒸馏可复用的技能。
 
     \b
@@ -60,7 +72,9 @@ def cli():
     配置文件: ~/.trace2skill/config.yaml
     输出目录: ~/.trace2skill/skills/<project>/
     """
-    pass
+    _setup_logging()
+    if verbose:
+        logging.getLogger("trace2skill_distiller").setLevel(logging.INFO)
 
 
 # ── init ──
@@ -121,6 +135,7 @@ def init(
 @click.option("--format", "output_format",
               type=click.Choice(["skill_md", "knowledge_md"], case_sensitive=False),
               help="覆盖配置的输出格式")
+@click.option("--workers", "-w", type=int, help="并发 worker 数（覆盖配置）")
 def distill(
     project: str | None,
     session_id: str | None,
@@ -131,6 +146,7 @@ def distill(
     incremental: bool,
     source_type: str | None,
     output_format: str | None,
+    workers: int | None,
 ):
     """从 Coding Agent 会话轨迹中蒸馏可复用技能。
 
@@ -149,6 +165,8 @@ def distill(
         config.source.type = source_type
     if output_format:
         config.output.format = output_format
+    if workers is not None:
+        config.concurrency.workers = workers
     pipeline = DistillPipeline.from_config(config)
 
     # Handle incremental

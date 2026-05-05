@@ -83,6 +83,11 @@ class OutputConfig(BaseModel):
     format: str = "skill_md"  # skill_md | knowledge_md
 
 
+class ConcurrencyConfig(BaseModel):
+    """Concurrency settings for parallel LLM processing."""
+    workers: int = 3  # number of parallel workers; 1 = sequential
+
+
 class SchedulerConfig(BaseModel):
     enabled: bool = False
     cron: str = "0 3 * * *"
@@ -104,6 +109,7 @@ class DistillConfig(BaseModel):
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
+    concurrency: ConcurrencyConfig = Field(default_factory=ConcurrencyConfig)
 
     @staticmethod
     def default_config_path() -> Path:
@@ -199,6 +205,7 @@ class DistillConfig(BaseModel):
                 max_rules_per_skill=raw.get("output", {}).get("max_rules_per_skill", 15),
                 format=raw.get("output", {}).get("format", "skill_md"),
             ),
+            concurrency=ConcurrencyConfig(**raw.get("concurrency", {})),
         )
 
 
@@ -255,6 +262,9 @@ def init_default_config(
             "enabled": False,
             "cron": "0 3 * * *",
         },
+        "concurrency": {
+            "workers": 3,
+        },
     }
     config_path = config_dir / "config.yaml"
     with open(config_path, "w", encoding="utf-8") as f:
@@ -298,6 +308,7 @@ _CONFIG_KEY_MAP: dict[str, tuple[list[str], type]] = {
     "output.format": (["output", "format"], str),
     "output.skill_output_dir": (["output", "skill_output_dir"], str),
     "output.max_rules_per_skill": (["output", "max_rules_per_skill"], int),
+    "concurrency.workers": (["concurrency", "workers"], int),
 }
 
 
