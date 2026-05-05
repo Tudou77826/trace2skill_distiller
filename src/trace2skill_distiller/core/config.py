@@ -201,8 +201,8 @@ class DistillConfig(BaseModel):
                 protected_topics=raw.get("protected_topics", []),
             ),
             output=OutputConfig(
-                skill_output_dir=raw.get("output", {}).get("skill_output_dir", "~/.trace2skill/skills"),
-                max_rules_per_skill=raw.get("output", {}).get("max_rules_per_skill", 15),
+                skill_output_dir=raw.get("output", {}).get("skill_output_dir") or raw.get("skill_output_dir", "~/.trace2skill/skills"),
+                max_rules_per_skill=raw.get("output", {}).get("max_rules_per_skill") or raw.get("max_rules_per_skill", 15),
                 format=raw.get("output", {}).get("format", "skill_md"),
             ),
             concurrency=ConcurrencyConfig(**raw.get("concurrency", {})),
