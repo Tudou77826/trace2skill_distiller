@@ -32,13 +32,24 @@ class LLMClient:
         if isinstance(provider_or_config, LLMConfig):
             from .providers.openai_compatible import OpenAICompatibleProvider
             self._provider = OpenAICompatibleProvider(provider_or_config)
+            self._config = provider_or_config
         else:
             self._provider = provider_or_config
+            self._config = getattr(provider_or_config, "_config", None)
         self._max_retries = max_retries
         self._lock = threading.Lock()
         self.total_input_tokens = 0
         self.total_output_tokens = 0
         self.call_count = 0
+
+        # Rate limiting from config
+        cfg = self._config
+        self._semaphore = (
+            threading.Semaphore(cfg.max_concurrency)
+            if cfg and cfg.max_concurrency > 0 else None
+        )
+        self._rpm_limit = cfg.max_rpm if cfg and cfg.max_rpm > 0 else 0
+        self._rpm_window: list[float] = []  # timestamps of recent calls
 
     def chat(
         self,
@@ -49,38 +60,62 @@ class LLMClient:
         retries: int = 2,
     ) -> str:
         """Single-turn chat completion, returns raw text. With retry on server errors."""
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ]
+        # Concurrency cap
+        if self._semaphore:
+            self._semaphore.acquire()
+        try:
+            # RPM cap
+            self._enforce_rpm()
 
-        last_error = None
-        for attempt in range(retries + 1):
-            try:
-                response = self._provider.complete(
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens or 4096,
-                )
-                break
-            except ContextOverflowError:
-                raise
-            except Exception as e:
-                last_error = e
-                if attempt < retries:
-                    time.sleep(2 ** attempt)
-                    continue
-                raise RuntimeError(
-                    f"LLM call failed after {retries + 1} attempts: {e}"
-                ) from e
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ]
 
-        # Track usage
+            last_error = None
+            for attempt in range(retries + 1):
+                try:
+                    response = self._provider.complete(
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens or 4096,
+                    )
+                    break
+                except ContextOverflowError:
+                    raise
+                except Exception as e:
+                    last_error = e
+                    if attempt < retries:
+                        time.sleep(2 ** attempt)
+                        continue
+                    raise RuntimeError(
+                        f"LLM call failed after {retries + 1} attempts: {e}"
+                    ) from e
+
+            # Track usage
+            with self._lock:
+                self.total_input_tokens += response.usage.input_tokens
+                self.total_output_tokens += response.usage.output_tokens
+                self.call_count += 1
+
+            return response.content
+        finally:
+            if self._semaphore:
+                self._semaphore.release()
+
+    def _enforce_rpm(self):
+        """Token-bucket RPM limiter — sleep if the rate limit would be exceeded."""
+        if self._rpm_limit <= 0:
+            return
+        now = time.monotonic()
         with self._lock:
-            self.total_input_tokens += response.usage.input_tokens
-            self.total_output_tokens += response.usage.output_tokens
-            self.call_count += 1
-
-        return response.content
+            self._rpm_window = [t for t in self._rpm_window if now - t < 60]
+            if len(self._rpm_window) >= self._rpm_limit:
+                sleep_time = 60 - (now - self._rpm_window[0]) + 0.05
+                time.sleep(sleep_time)
+                now = time.monotonic()
+                self._rpm_window = [t for t in self._rpm_window if now - t < 60]
+            self._rpm_window.append(now)
 
     def chat_json(
         self,

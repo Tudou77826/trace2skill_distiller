@@ -55,6 +55,11 @@ class DefaultMiningLayer:
             self._min_tools = config.filter.min_tools
             self._distill_config = config
             self._max_workers = config.concurrency.workers
+            # Cap by model's max_concurrency if set
+            if config.fast_model.max_concurrency > 0:
+                self._max_workers = min(
+                    self._max_workers, config.fast_model.max_concurrency
+                )
         else:
             self._min_messages = 5
             self._min_tools = 3

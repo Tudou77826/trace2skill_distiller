@@ -1,0 +1,1130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>命令参考 — Trace2Skill Distiller</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #faf9f7;
+    --bg-card: #ffffff;
+    --bg-code: #f5f4f1;
+    --bg-hero: linear-gradient(180deg, #f5f3ef 0%, #faf9f7 100%);
+    --bg-dark: #1d1d1f;
+    --text-primary: #1d1d1f;
+    --text-secondary: #6e6e73;
+    --text-tertiary: #86868b;
+    --accent: #e8590c;
+    --accent-light: #fff4ed;
+    --accent-gradient: linear-gradient(135deg, #e8590c 0%, #d9480f 100%);
+    --border: #e8e6e1;
+    --border-light: #f0eeea;
+    --green: #2b8a3e;
+    --green-bg: #ebfbee;
+    --blue: #1971c2;
+    --blue-bg: #e7f5ff;
+    --purple: #7048e8;
+    --purple-bg: #f3f0ff;
+    --radius: 16px;
+    --radius-sm: 10px;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.03);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04);
+    --shadow-lg: 0 12px 40px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.04);
+    --nav-h: 52px;
+    --sidebar-w: 240px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Nav ── */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    background: rgba(250,249,247,0.82);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 1px solid var(--border-light);
+    padding: 0 40px;
+    height: var(--nav-h);
+    display: flex; align-items: center; gap: 32px;
+  }
+  nav .logo { font-weight: 700; font-size: 15px; color: var(--text-primary); letter-spacing: -0.3px; text-decoration: none; }
+  nav a { font-size: 13px; color: var(--text-secondary); text-decoration: none; font-weight: 500; transition: color 0.2s; }
+  nav a:hover, nav a.active { color: var(--accent); }
+
+  /* ── Mobile menu toggle ── */
+  .sidebar-toggle {
+    display: none;
+    position: fixed; bottom: 24px; right: 24px; z-index: 200;
+    width: 48px; height: 48px; border-radius: 50%;
+    background: var(--bg-dark); color: #fff;
+    border: none; cursor: pointer;
+    font-size: 20px; line-height: 48px; text-align: center;
+    box-shadow: var(--shadow-lg);
+  }
+
+  /* ── Layout ── */
+  .layout {
+    display: flex;
+    margin-top: var(--nav-h);
+    min-height: calc(100vh - var(--nav-h));
+  }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    position: sticky; top: var(--nav-h);
+    width: var(--sidebar-w);
+    min-width: var(--sidebar-w);
+    height: calc(100vh - var(--nav-h));
+    overflow-y: auto;
+    border-right: 1px solid var(--border-light);
+    padding: 24px 0;
+    background: var(--bg);
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .sidebar::-webkit-scrollbar { width: 4px; }
+  .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .sidebar .toc-group { margin-bottom: 20px; }
+  .sidebar .toc-title {
+    font-size: 11px; font-weight: 600; color: var(--text-tertiary);
+    text-transform: uppercase; letter-spacing: 1px;
+    padding: 0 20px; margin-bottom: 6px;
+  }
+  .sidebar a {
+    display: block; padding: 5px 20px;
+    font-size: 13px; font-weight: 450; color: var(--text-secondary);
+    text-decoration: none; transition: all 0.15s;
+    border-left: 2px solid transparent;
+  }
+  .sidebar a:hover { color: var(--text-primary); background: rgba(0,0,0,0.02); }
+  .sidebar a.active {
+    color: var(--accent); font-weight: 600;
+    border-left-color: var(--accent);
+    background: var(--accent-light);
+  }
+  .sidebar .toc-sub { padding-left: 12px; }
+  .sidebar .toc-sub a { font-size: 12.5px; padding: 4px 20px; }
+
+  /* ── Main Content ── */
+  .content {
+    flex: 1;
+    max-width: 860px;
+    padding: 40px 48px 80px;
+  }
+
+  /* ── Page Header ── */
+  .page-header {
+    padding-bottom: 32px;
+    margin-bottom: 40px;
+    border-bottom: 1px solid var(--border);
+  }
+  .page-header .breadcrumb {
+    font-size: 13px; color: var(--text-tertiary); margin-bottom: 12px;
+  }
+  .page-header .breadcrumb a { color: var(--text-secondary); text-decoration: none; }
+  .page-header .breadcrumb a:hover { color: var(--accent); }
+  .page-header h1 {
+    font-size: 36px; font-weight: 700; letter-spacing: -0.8px;
+    margin-bottom: 8px; line-height: 1.2;
+  }
+  .page-header p {
+    font-size: 16px; color: var(--text-secondary); max-width: 600px;
+  }
+
+  /* ── Quick Tags ── */
+  .quick-tags {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin-top: 16px;
+  }
+  .quick-tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 12px; font-weight: 500;
+    padding: 4px 12px; border-radius: 20px;
+    text-decoration: none;
+    transition: all 0.2s;
+  }
+  .quick-tag:hover { transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+  .quick-tag.core { background: var(--accent-light); color: var(--accent); }
+  .quick-tag.meta { background: var(--blue-bg); color: var(--blue); }
+  .quick-tag.config-tag { background: var(--green-bg); color: var(--green); }
+  .quick-tag.sched { background: var(--purple-bg); color: var(--purple); }
+
+  /* ── Sections ── */
+  .section {
+    margin-bottom: 56px;
+    scroll-margin-top: calc(var(--nav-h) + 20px);
+  }
+  .section-label {
+    font-size: 11px; font-weight: 600; color: var(--accent);
+    text-transform: uppercase; letter-spacing: 1px;
+    margin-bottom: 6px;
+  }
+  .section h2 {
+    font-size: 24px; font-weight: 700; letter-spacing: -0.4px;
+    margin-bottom: 12px; line-height: 1.25;
+  }
+  .section > .desc {
+    font-size: 15px; color: var(--text-secondary);
+    max-width: 640px; margin-bottom: 24px; line-height: 1.6;
+  }
+
+  /* ── Command Summary Table ── */
+  .summary-table {
+    width: 100%; border-collapse: collapse;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 32px;
+  }
+  .summary-table th {
+    text-align: left; font-weight: 600; color: var(--text-secondary);
+    padding: 12px 20px; border-bottom: 2px solid var(--border);
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;
+    background: var(--bg);
+  }
+  .summary-table td {
+    padding: 12px 20px; border-bottom: 1px solid var(--border-light);
+    vertical-align: middle; font-size: 14px;
+  }
+  .summary-table tr:last-child td { border-bottom: none; }
+  .summary-table tr:hover { background: rgba(0,0,0,0.015); }
+  .summary-table code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px; background: var(--bg-code);
+    padding: 2px 8px; border-radius: 4px;
+    color: var(--accent); white-space: nowrap;
+  }
+
+  /* ── Command Cards ── */
+  .cmd {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 16px;
+    overflow: hidden;
+    transition: box-shadow 0.2s;
+  }
+  .cmd:hover { box-shadow: var(--shadow-sm); }
+  .cmd-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .cmd-header .cmd-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px; font-weight: 600; color: var(--accent);
+  }
+  .cmd-header .cmd-title {
+    font-size: 14px; color: var(--text-secondary);
+  }
+  .cmd-body { padding: 0 24px 20px; }
+  .cmd-body p { font-size: 14px; color: var(--text-secondary); margin-top: 12px; line-height: 1.6; }
+  .cmd-body pre {
+    background: var(--bg-code);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    padding: 14px 18px;
+    margin-top: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text-primary);
+    overflow-x: auto;
+  }
+  .cmd-body pre .comment { color: var(--text-tertiary); }
+  .cmd-body pre .flag { color: var(--accent); }
+  .cmd-body pre .value { color: var(--blue); }
+
+  /* options table */
+  .opts-table {
+    width: 100%; border-collapse: collapse;
+    margin-top: 14px; font-size: 13.5px;
+  }
+  .opts-table th {
+    text-align: left; font-weight: 600; color: var(--text-secondary);
+    padding: 8px 12px; border-bottom: 1px solid var(--border);
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .opts-table td {
+    padding: 8px 12px; border-bottom: 1px solid var(--border-light);
+    vertical-align: top;
+  }
+  .opts-table tr:last-child td { border-bottom: none; }
+  .opts-table code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12.5px; background: var(--bg-code);
+    padding: 2px 6px; border-radius: 4px;
+    color: var(--accent);
+  }
+  .opts-table .type { color: var(--text-tertiary); font-size: 12px; }
+
+  /* ── Quick Start Steps ── */
+  .steps {
+    display: flex; flex-direction: column; gap: 16px;
+    margin-bottom: 32px;
+  }
+  .step {
+    display: flex; gap: 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+  }
+  .step-num {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--accent-light); color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 700; flex-shrink: 0;
+  }
+  .step-content { flex: 1; }
+  .step-content h4 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .step-content p { font-size: 13px; color: var(--text-secondary); line-height: 1.55; }
+  .step-content pre {
+    margin-top: 8px;
+    background: var(--bg-code);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--text-primary);
+  }
+
+  /* ── Config Tree ── */
+  .config-tree {
+    background: var(--bg-code);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    padding: 20px 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    line-height: 1.8;
+    color: var(--text-secondary);
+    overflow-x: auto;
+  }
+  .config-tree .key { color: var(--accent); }
+  .config-tree .val { color: var(--blue); }
+  .config-tree .comment { color: var(--text-tertiary); }
+
+  /* ── Key List Table ── */
+  .key-table {
+    width: 100%; border-collapse: collapse;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    font-size: 13.5px;
+  }
+  .key-table th {
+    text-align: left; font-weight: 600; color: var(--text-secondary);
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;
+    background: var(--bg);
+  }
+  .key-table td {
+    padding: 8px 16px; border-bottom: 1px solid var(--border-light);
+    vertical-align: middle;
+  }
+  .key-table tr:last-child td { border-bottom: none; }
+  .key-table tr:hover { background: rgba(0,0,0,0.015); }
+  .key-table code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12.5px; color: var(--accent);
+    background: var(--bg-code); padding: 2px 6px; border-radius: 4px;
+  }
+  .key-table .group-label {
+    font-weight: 600; color: var(--text-primary);
+    background: var(--bg);
+  }
+
+  /* ── Tags ── */
+  .tag {
+    display: inline-block;
+    font-size: 11px; font-weight: 600;
+    padding: 2px 8px; border-radius: 4px;
+    margin-left: 8px;
+  }
+  .tag-new { background: var(--green-bg); color: var(--green); }
+  .tag-popular { background: var(--purple-bg); color: var(--purple); }
+  .tag-zero { background: var(--blue-bg); color: var(--blue); }
+
+  /* ── Footer ── */
+  footer {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-tertiary);
+    font-size: 13px;
+    border-top: 1px solid var(--border-light);
+  }
+  footer a { color: var(--text-secondary); text-decoration: none; }
+
+  /* ── Responsive ── */
+  @media (max-width: 900px) {
+    .sidebar { display: none; }
+    .sidebar.open {
+      display: block;
+      position: fixed; top: var(--nav-h); left: 0; bottom: 0;
+      z-index: 150; background: var(--bg);
+      box-shadow: var(--shadow-lg);
+    }
+    .sidebar-toggle { display: block; }
+    .content { padding: 24px 20px 60px; }
+    nav { padding: 0 20px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav>
+  <a href="index.html" class="logo">Trace2Skill</a>
+  <a href="index.html#principle">原理</a>
+  <a href="index.html#workflow">工作流</a>
+  <a href="cli.html" class="active">命令参考</a>
+  <a href="index.html#config">配置</a>
+</nav>
+
+<!-- Mobile sidebar toggle -->
+<button class="sidebar-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')">&#9776;</button>
+
+<div class="layout">
+
+<!-- Sidebar -->
+<aside class="sidebar">
+  <div class="toc-group">
+    <div class="toc-title">概述</div>
+    <a href="#overview" data-section="overview">命令总览</a>
+  </div>
+
+  <div class="toc-group">
+    <div class="toc-title">快速开始</div>
+    <a href="#quickstart" data-section="quickstart">三步上手</a>
+    <a href="#init" data-section="init" class="toc-sub">init</a>
+  </div>
+
+  <div class="toc-group">
+    <div class="toc-title">核心命令</div>
+    <a href="#sessions" data-section="sessions">sessions</a>
+    <a href="#distill" data-section="distill">distill</a>
+    <a href="#inspect" data-section="inspect">inspect</a>
+  </div>
+
+  <div class="toc-group">
+    <div class="toc-title">状态与配置</div>
+    <a href="#status" data-section="status">status</a>
+    <a href="#config" data-section="config">config</a>
+    <a href="#config-show" data-section="config-show" class="toc-sub">config show</a>
+    <a href="#config-set" data-section="config-set" class="toc-sub">config set</a>
+    <a href="#config-edit" data-section="config-edit" class="toc-sub">config edit</a>
+  </div>
+
+  <div class="toc-group">
+    <div class="toc-title">调度任务</div>
+    <a href="#schedule" data-section="schedule">schedule</a>
+  </div>
+
+  <div class="toc-group">
+    <div class="toc-title">附录</div>
+    <a href="#appendix-config" data-section="appendix-config">配置文件参考</a>
+    <a href="#appendix-keys" data-section="appendix-keys">可配置 Key 列表</a>
+    <a href="#appendix-output" data-section="appendix-output">输出目录结构</a>
+  </div>
+</aside>
+
+<!-- Main Content -->
+<main class="content">
+
+  <!-- Page Header -->
+  <div class="page-header">
+    <div class="breadcrumb"><a href="index.html">首页</a> / 命令参考</div>
+    <h1>命令参考</h1>
+    <p>Trace2Skill Distiller CLI 的完整参考文档。所有命令、选项和示例。</p>
+    <div class="quick-tags">
+      <a href="#quickstart" class="quick-tag core">快速开始</a>
+      <a href="#distill" class="quick-tag core">distill</a>
+      <a href="#sessions" class="quick-tag meta">sessions</a>
+      <a href="#config" class="quick-tag config-tag">config</a>
+      <a href="#schedule" class="quick-tag sched">schedule</a>
+    </div>
+  </div>
+
+  <!-- ── Overview ── -->
+  <div class="section" id="overview">
+    <div class="section-label">Overview</div>
+    <h2>命令总览</h2>
+    <p class="desc">所有可用的命令及其用途一览。</p>
+
+    <table class="summary-table">
+      <thead>
+        <tr><th>命令</th><th>说明</th><th>标签</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>trace2skill init</code></td>
+          <td>首次初始化，创建配置文件和 .env</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><code>trace2skill sessions</code></td>
+          <td>浏览可用会话（纯元数据，不调用 LLM）</td>
+          <td><span class="tag tag-zero">零 LLM</span></td>
+        </tr>
+        <tr>
+          <td><code>trace2skill distill</code></td>
+          <td>从会话轨迹中蒸馏可复用技能</td>
+          <td><span class="tag tag-popular">核心</span></td>
+        </tr>
+        <tr>
+          <td><code>trace2skill inspect</code></td>
+          <td>运行预处理流水线，检查单个会话</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><code>trace2skill status</code></td>
+          <td>查看蒸馏历史和已生成的知识文件</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><code>trace2skill config show</code></td>
+          <td>显示当前有效配置</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><code>trace2skill config set</code></td>
+          <td>设置单个配置项</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><code>trace2skill config edit</code></td>
+          <td>用编辑器打开 config.yaml</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><code>trace2skill schedule start</code></td>
+          <td>启动定时蒸馏守护进程</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><code>trace2skill schedule status</code></td>
+          <td>查看调度器配置和启用状态</td>
+          <td></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="cmd">
+      <div class="cmd-header">
+        <span class="cmd-name">全局选项</span>
+        <span class="cmd-title">适用于所有命令</span>
+      </div>
+      <div class="cmd-body">
+        <table class="opts-table">
+          <tr><th>选项</th><th>说明</th></tr>
+          <tr><td><code>--version</code></td><td>显示版本号</td></tr>
+          <tr><td><code>-v, --verbose</code></td><td>显示详细日志（INFO 级别），并发处理时推荐开启</td></tr>
+          <tr><td><code>--help</code></td><td>显示帮助信息</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Quick Start ── -->
+  <div class="section" id="quickstart">
+    <div class="section-label">Quick Start</div>
+    <h2>三步上手</h2>
+    <p class="desc">从安装到首次蒸馏，只需三步。</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-content">
+          <h4>初始化配置</h4>
+          <p>创建配置文件，写入 API 凭证。只需运行一次。</p>
+          <pre>$ trace2skill init</pre>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-content">
+          <h4>浏览会话</h4>
+          <p>查看有哪些可用会话，挑选感兴趣的 ID。秒级返回，不调用 LLM。</p>
+          <pre>$ trace2skill sessions</pre>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-content">
+          <h4>蒸馏技能</h4>
+          <p>对选中的会话运行蒸馏流水线，生成结构化 SKILL.md 文件。</p>
+          <pre>$ trace2skill distill -s &lt;SESSION_ID&gt;</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── init ── -->
+  <div class="section" id="init">
+    <div class="section-label">Setup</div>
+    <h2>init <span style="font-size:16px;font-weight:400;color:var(--text-tertiary)">&mdash; 初始化配置</span></h2>
+
+    <div class="cmd">
+      <div class="cmd-header">
+        <span class="cmd-name">trace2skill init</span>
+        <span class="cmd-title">首次使用前运行，创建 config.yaml 和 .env</span>
+      </div>
+      <div class="cmd-body">
+        <p>创建 <code>~/.trace2skill/config.yaml</code> 配置文件和 <code>~/.trace2skill/.env</code> 密钥文件。API 密钥存储在 .env 中，config.yaml 通过环境变量读取。</p>
+        <pre><span class="comment"># 交互式初始化（会提示输入 API Key 和 Base URL）</span>
+$ trace2skill init
+
+<span class="comment"># 指定所有参数</span>
+$ trace2skill init \
+    --api-key sk-xxx \
+    --base-url https://api.openai.com/v1 \
+    --fast-model openai/gpt-oss-120b \
+    --strong-model openai/gpt-oss-120b \
+    --source opencode
+
+<span class="comment"># 带代理和网络配置</span>
+$ trace2skill init \
+    --api-key sk-xxx \
+    --base-url https://api.openai.com/v1 \
+    --proxy socks5://127.0.0.1:1080 \
+    --proxy-bypass "localhost,127\.0\.0\.1" \
+    --timeout 180 \
+    --connect-timeout 15</pre>
+        <table class="opts-table">
+          <tr><th>选项</th><th>说明</th><th>默认值</th></tr>
+          <tr><td><code>--api-key</code></td><td>LLM API 密钥</td><td class="type">交互式输入</td></tr>
+          <tr><td><code>--base-url</code></td><td>LLM API 基础地址</td><td class="type">交互式输入</td></tr>
+          <tr><td><code>--fast-model</code></td><td>快速模型（L1/L2 预处理）</td><td class="type">openai/gpt-oss-120b</td></tr>
+          <tr><td><code>--strong-model</code></td><td>强力模型（蒸馏和合并）</td><td class="type">openai/gpt-oss-120b</td></tr>
+          <tr><td><code>--source</code></td><td>数据源类型：<code>opencode</code> | <code>chrys</code></td><td class="type">opencode</td></tr>
+          <tr><td><code>--proxy</code></td><td>代理地址（如 socks5://127.0.0.1:1080）</td><td class="type">无</td></tr>
+          <tr><td><code>--proxy-bypass</code></td><td>不走代理的 host 正则，逗号分隔</td><td class="type">无</td></tr>
+          <tr><td><code>--verify-ssl / --no-verify-ssl</code></td><td>是否验证 SSL 证书</td><td class="type">--no-verify-ssl</td></tr>
+          <tr><td><code>--timeout</code></td><td>请求超时（秒）</td><td class="type">120</td></tr>
+          <tr><td><code>--connect-timeout</code></td><td>连接超时（秒）</td><td class="type">10</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── sessions ── -->
+  <div class="section" id="sessions">
+    <div class="section-label">Core</div>
+    <h2>sessions <span style="font-size:16px;font-weight:400;color:var(--text-tertiary)">&mdash; 浏览会话 <span class="tag tag-zero">零 LLM</span></span></h2>
+
+    <div class="cmd">
+      <div class="cmd-header">
+        <span class="cmd-name">trace2skill sessions</span>
+        <span class="cmd-title">纯元数据浏览，秒级返回，不调用任何 LLM</span>
+      </div>
+      <div class="cmd-body">
+        <p>在蒸馏前先用此命令浏览可用会话，挑选感兴趣的 ID。默认只显示消息数最多、且通过质量阈值的 top 20。</p>
+        <pre><span class="comment"># 默认显示 top 20（按消息数排序，过滤低质量）</span>
+$ trace2skill sessions
+
+<span class="comment"># 按项目过滤</span>
+$ trace2skill sessions <span class="flag">-p</span> my-project
+
+<span class="comment"># 只看最活跃的 5 个</span>
+$ trace2skill sessions <span class="flag">--top</span> <span class="value">5</span>
+
+<span class="comment"># 包含低质量会话（不过滤）</span>
+$ trace2skill sessions <span class="flag">--all</span>
+
+<span class="comment"># 组合使用：看某项目的所有会话</span>
+$ trace2skill sessions <span class="flag">-p</span> my-project <span class="flag">--all</span> <span class="flag">--top</span> <span class="value">50</span></pre>
+        <table class="opts-table">
+          <tr><th>选项</th><th>说明</th><th>默认值</th></tr>
+          <tr><td><code>-p, --project</code></td><td>按项目名称过滤（子串匹配）</td><td class="type">全部</td></tr>
+          <tr><td><code>--top</code></td><td>最多显示 N 个会话</td><td class="type">20</td></tr>
+          <tr><td><code>--all</code></td><td>显示所有会话（不过滤低质量）</td><td class="type">关闭</td></tr>
+        </table>
+        <p><strong>输出示例：</strong></p>
+        <pre>Sessions (5/42)
+ #  Session ID           Title                             Project         Msgs  Tools  Date
+ 1  abc123-def456-789...  Fix Redis connection timeout     my-project       28     12   2026-05-04
+ 2  xyz789-abc456-123...  Implement JWT refresh token      my-project       22      9   2026-05-03
+ ...
+
+Use 'trace2skill distill -s &lt;ID&gt;' to distill a specific session.</pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── distill ── -->
+  <div class="section" id="distill">
+    <div class="section-label">Core</div>
+    <h2>distill <span style="font-size:16px;font-weight:400;color:var(--text-tertiary)">&mdash; 蒸馏技能 <span class="tag tag-popular">核心</span></span></h2>
+
+    <div class="cmd">
+      <div class="cmd-header">
+        <span class="cmd-name">trace2skill distill</span>
+        <span class="cmd-title">从 Coding Agent 轨迹中蒸馏可复用技能</span>
+      </div>
+      <div class="cmd-body">
+        <p>完整的蒸馏流水线。支持按项目、日期、单个会话过滤。可分步执行、试运行、增量处理。默认 3 个 worker 并发。</p>
+
+        <pre><span class="comment"># 蒸馏全部会话（使用默认配置）</span>
+$ trace2skill distill
+
+<span class="comment"># 按项目过滤</span>
+$ trace2skill distill <span class="flag">-p</span> my-project
+
+<span class="comment"># 蒸馏单个会话（先用 sessions 找到 ID）</span>
+$ trace2skill distill <span class="flag">-s</span> abc123-def456
+
+<span class="comment"># 按日期范围</span>
+$ trace2skill distill <span class="flag">--from</span> <span class="value">2026-05-01</span> <span class="flag">--to</span> <span class="value">2026-05-06</span>
+
+<span class="comment"># 只看预处理结果，不蒸馏</span>
+$ trace2skill distill <span class="flag">--step</span> <span class="value">1</span>
+
+<span class="comment"># 试运行：蒸馏但不写文件</span>
+$ trace2skill distill <span class="flag">--dry-run</span>
+
+<span class="comment"># 增量模式：只处理新会话</span>
+$ trace2skill distill <span class="flag">--incremental</span>
+
+<span class="comment"># 指定数据源和输出格式</span>
+$ trace2skill distill <span class="flag">--source</span> <span class="value">chrys</span> <span class="flag">--format</span> <span class="value">knowledge_md</span>
+
+<span class="comment"># 调整并发数</span>
+$ trace2skill distill <span class="flag">-w</span> <span class="value">5</span>
+
+<span class="comment"># 强制串行 + 详细日志（调试用）</span>
+$ trace2skill <span class="flag">-v</span> distill <span class="flag">-w</span> <span class="value">1</span> <span class="flag">-s</span> abc123</pre>
+
+        <table class="opts-table">
+          <tr><th>选项</th><th>说明</th><th>默认值</th></tr>
+          <tr><td><code>-p, --project</code></td><td>按项目名称过滤（子串匹配）</td><td class="type">全部</td></tr>
+          <tr><td><code>-s, --session</code></td><td>指定要蒸馏的单个会话 ID</td><td class="type">全部</td></tr>
+          <tr><td><code>--from</code></td><td>起始日期（格式 YYYY-MM-DD）</td><td class="type">不限</td></tr>
+          <tr><td><code>--to</code></td><td>截止日期（格式 YYYY-MM-DD）</td><td class="type">不限</td></tr>
+          <tr><td><code>--step</code></td><td>执行到步骤 N 后停止：<br><code>1</code> = 仅预处理<br><code>2</code> = 蒸馏（不合并/写入）</td><td class="type">全部步骤</td></tr>
+          <tr><td><code>--dry-run</code></td><td>仅展示蒸馏规则，不写入文件</td><td class="type">关闭</td></tr>
+          <tr><td><code>--incremental</code></td><td>仅处理上次运行之后的新会话</td><td class="type">关闭</td></tr>
+          <tr><td><code>--source</code></td><td>覆盖数据源：<code>opencode</code> | <code>chrys</code></td><td class="type">读配置</td></tr>
+          <tr><td><code>--format</code></td><td>覆盖输出格式：<code>skill_md</code> | <code>knowledge_md</code></td><td class="type">读配置</td></tr>
+          <tr><td><code>-w, --workers</code></td><td>并发 worker 数</td><td class="type">3（读配置）</td></tr>
+        </table>
+
+        <p><strong>推荐工作流：</strong></p>
+        <pre><span class="comment"># 1. 先浏览，找到想蒸馏的会话</span>
+$ trace2skill sessions <span class="flag">-p</span> my-project
+
+<span class="comment"># 2. 试运行，看看蒸馏结果</span>
+$ trace2skill distill <span class="flag">-s</span> &lt;ID&gt; <span class="flag">--dry-run</span>
+
+<span class="comment"># 3. 满意后再正式蒸馏</span>
+$ trace2skill distill <span class="flag">-s</span> &lt;ID&gt;</pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── inspect ── -->
+  <div class="section" id="inspect">
+    <div class="section-label">Core</div>
+    <h2>inspect <span style="font-size:16px;font-weight:400;color:var(--text-tertiary)">&mdash; 检查会话</span></h2>
+
+    <div class="cmd">
+      <div class="cmd-header">
+        <span class="cmd-name">trace2skill inspect &lt;SESSION_ID&gt;</span>
+        <span class="cmd-title">运行 L0&rarr;L1&rarr;L2 预处理，展示轨迹摘要</span>
+      </div>
+      <div class="cmd-body">
+        <p>对单个会话运行完整预处理流水线，展示生成的摘要：类型、意图、阶段、问题、经验教训和新发现。会调用 LLM。适用于调试过滤阈值或检查会话质量。</p>
+        <pre>$ trace2skill inspect abc123-def456
+
+<span class="comment"># 输出：</span>
+Session: abc123-def456
+  Type: debug
+  Project: my-project
+  Intent: Fix Redis connection timeout in production
+  Label: success (score: 0.85)
+
+Phases:
+  debug: Investigated Redis connection pool exhaustion
+  fix: Implemented retry with exponential backoff
+
+Problems:
+  - Redis pool exhausted under load &rarr; Added connection timeout + retry
+
+Lessons:
+  - Always set connection timeout on Redis pools in production
+
+Discoveries:
+  - Redis default pool size is 10, needs tuning for high-concurrency
+
+Fast LLM: 3 calls, 450+120 tokens</pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── status ── -->
+  <div class="section" id="status">
+    <div class="section-label">Info</div>
+    <h2>status <span style="font-size:16px;font-weight:400;color:var(--text-tertiary)">&mdash; 查看状态</span></h2>
+
+    <div class="cmd">
+      <div class="cmd-header">
+        <span class="cmd-name">trace2skill status</span>
+        <span class="cmd-title">查看蒸馏历史和已生成的知识文件</span>
+      </div>
+      <div class="cmd-body">
+        <p>显示上次运行时间、已处理的会话数、累计消耗费用，并列出所有已生成的 SKILL.md 和 Knowledge.md 文件。</p>
+        <pre>$ trace2skill status
+
+<span class="comment"># 输出：</span>
+Trace2Skill Status
+  Last run: 2026-05-06T14:30:00
+  Sessions processed: 12
+  Cost accumulated: ¥0.1234
+
+Skill files (4):
+  my-project/jwt-auth/SKILL.md (3420 bytes)
+  my-project/redis-debug/SKILL.md (2180 bytes)
+  my-project/setup/project_knowledge.md (1560 bytes)
+  my-project/api-design/SKILL.md (4100 bytes)</pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── config ── -->
+  <div class="section" id="config">
+    <div class="section-label">Config</div>
+    <h2>config <span style="font-size:16px;font-weight:400;color:var(--text-tertiary)">&mdash; 配置管理</span></h2>
+    <p class="desc">查看和管理配置文件。包含 show、set、edit 三个子命令。</p>
+  </div>
+
+  <div class="section" id="config-show">
+    <div class="cmd">
+      <div class="cmd-header">
+        <span class="cmd-name">trace2skill config show</span>
+        <span class="cmd-title">显示当前有效配置（API Key 脱敏）</span>
+      </div>
+      <div class="cmd-body">
+        <p>从 <code>~/.trace2skill/config.yaml</code> 加载配置，展示 Fast Model、Strong Model 和 Source 三个面板。环境变量覆盖也会反映在输出中。API 密钥仅显示前 4 个字符。</p>
+        <pre>$ trace2skill config show
+
+<span class="comment"># 输出 Fast Model / Strong Model / Source 三个面板</span>
+Fast Model
+  model: openai/gpt-oss-120b
+  api_key: sk-s****xxxx
+  base_url: https://api.openai.com/v1
+  ...
+
+Source
+  type: opencode
+  opencode.db_path: ~/.local/share/opencode/opencode.db
+  chrys.sessions_dir: (auto-detect)</pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="section" id="config-set">
+    <div class="cmd">
+      <div class="cmd-header">
+        <span class="cmd-name">trace2skill config set &lt;KEY&gt; &lt;VALUE&gt;</span>
+        <span class="cmd-title">设置单个配置项（点分路径 key）</span>
+      </div>
+      <div class="cmd-body">
+        <p>KEY 使用点分路径格式。VALUE 为字符串值，自动转换为正确的类型（bool、int、float、str）。修改后立即生效，无需重启。</p>
+        <pre><span class="comment"># 修改代理</span>
+$ trace2skill config set fast.proxy socks5://127.0.0.1:1080
+$ trace2skill config set fast.proxy_bypass "localhost,127\.0\.0\.1"
+
+<span class="comment"># 调整超时</span>
+$ trace2skill config set strong.timeout 180
+
+<span class="comment"># 开启 SSL 验证</span>
+$ trace2skill config set fast.verify_ssl true
+
+<span class="comment"># 调整并发数</span>
+$ trace2skill config set concurrency.workers 5
+
+<span class="comment"># 修改输出格式</span>
+$ trace2skill config set output.format knowledge_md
+
+<span class="comment"># 修改输出目录</span>
+$ trace2skill config set output.skill_output_dir ~/my-skills</pre>
+        <p>所有可用的 key 见下方<a href="#appendix-keys">可配置 Key 列表</a>。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="section" id="config-edit">
+    <div class="cmd">
+      <div class="cmd-header">
+        <span class="cmd-name">trace2skill config edit</span>
+        <span class="cmd-title">用默认编辑器打开 config.yaml</span>
+      </div>
+      <div class="cmd-body">
+        <p>使用 <code>$VISUAL</code> 或 <code>$EDITOR</code> 环境变量指定的编辑器打开配置文件。Windows 回退到 notepad，Unix 回退到 vi。</p>
+        <pre>$ trace2skill config edit
+<span class="comment"># 自动用 $VISUAL / $EDITOR 打开，Windows 回退 notepad，Unix 回退 vi</span></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── schedule ── -->
+  <div class="section" id="schedule">
+    <div class="section-label">Scheduling</div>
+    <h2>schedule <span style="font-size:16px;font-weight:400;color:var(--text-tertiary)">&mdash; 定时任务</span></h2>
+    <p class="desc">管理定时蒸馏任务。包含 start 和 status 两个子命令。</p>
+
+    <div class="cmd">
+      <div class="cmd-header">
+        <span class="cmd-name">trace2skill schedule start</span>
+        <span class="cmd-title">启动定时蒸馏守护进程（前台运行）</span>
+      </div>
+      <div class="cmd-body">
+        <p>在前景运行，按 <code>scheduler.cron</code> 定义的时间触发蒸馏。默认每天凌晨 3 点。使用增量策略，只处理新会话。按 <kbd>Ctrl+C</kbd> 停止。</p>
+        <pre><span class="comment"># 启用调度器</span>
+$ trace2skill config set scheduler.enabled true
+
+<span class="comment"># 启动（前台运行）</span>
+$ trace2skill schedule start
+
+<span class="comment"># 查看调度器状态</span>
+$ trace2skill schedule status</pre>
+        <table class="opts-table">
+          <tr><th>调度器配置项</th><th>说明</th><th>默认值</th></tr>
+          <tr><td><code>scheduler.enabled</code></td><td>是否启用</td><td class="type">false</td></tr>
+          <tr><td><code>scheduler.cron</code></td><td>Cron 表达式</td><td class="type">0 3 * * *</td></tr>
+          <tr><td><code>scheduler.strategy</code></td><td>运行策略：<code>incremental</code></td><td class="type">incremental</td></tr>
+          <tr><td><code>scheduler.max_sessions_per_run</code></td><td>每次最多处理会话数</td><td class="type">20</td></tr>
+          <tr><td><code>scheduler.max_cost_per_run</code></td><td>每次最大费用（¥）</td><td class="type">1.0</td></tr>
+          <tr><td><code>scheduler.max_runtime_minutes</code></td><td>每次最大运行时间</td><td class="type">30</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <div class="cmd">
+      <div class="cmd-header">
+        <span class="cmd-name">trace2skill schedule status</span>
+        <span class="cmd-title">查看调度器配置及启用状态</span>
+      </div>
+      <div class="cmd-body">
+        <p>从 config.yaml 读取调度器设置，显示是否启用、cron 表达式和运行策略。</p>
+        <pre>$ trace2skill schedule status
+<span class="comment"># 输出：Scheduler: enabled/disabled, Cron: ..., Strategy: ...</span></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Appendix: Config File ── -->
+  <div class="section" id="appendix-config">
+    <div class="section-label">Appendix</div>
+    <h2>配置文件参考</h2>
+    <p class="desc">完整配置文件结构。文件位于 <code>~/.trace2skill/config.yaml</code>，API 密钥存储在 <code>~/.trace2skill/.env</code>。</p>
+
+    <div class="config-tree">
+      <span class="comment"># ~/.trace2skill/config.yaml</span>
+
+      <span class="key">models</span>:
+        <span class="key">fast</span>:                          <span class="comment"># 快速模型（预处理 + 聚类）</span>
+          <span class="key">model</span>: <span class="val">openai/gpt-oss-120b</span>
+          <span class="key">max_tokens</span>: <span class="val">4096</span>
+          <span class="key">api_key</span>: <span class="val">""</span>                  <span class="comment"># 推荐放 .env</span>
+          <span class="key">base_url</span>: <span class="val">""</span>
+          <span class="key">verify_ssl</span>: <span class="val">false</span>
+          <span class="key">proxy</span>: <span class="val">""</span>                    <span class="comment"># socks5://127.0.0.1:1080</span>
+          <span class="key">proxy_bypass</span>: <span class="val">""</span>             <span class="comment"># localhost,127\.0\.0\.1</span>
+          <span class="key">timeout</span>: <span class="val">120</span>
+          <span class="key">connect_timeout</span>: <span class="val">10</span>
+          <span class="key">extra_headers</span>: <span class="val">{}</span>
+          <span class="key">user_agent</span>: <span class="val">curl/8.0</span>
+          <span class="key">max_rpm</span>: <span class="val">0</span>                    <span class="comment"># 0 = 不限；每分钟最大请求数</span>
+          <span class="key">max_concurrency</span>: <span class="val">0</span>            <span class="comment"># 0 = 不限；最大并发请求数</span>
+        <span class="key">strong</span>:                        <span class="comment"># 强力模型（蒸馏），继承 fast 的缺省值</span>
+          <span class="key">model</span>: <span class="val">openai/gpt-oss-120b</span>
+          <span class="key">max_tokens</span>: <span class="val">8192</span>
+
+      <span class="key">source</span>:
+        <span class="key">type</span>: <span class="val">opencode</span>                 <span class="comment"># opencode | chrys</span>
+        <span class="key">opencode</span>:
+          <span class="key">db_path</span>: <span class="val">~/.local/share/opencode/opencode.db</span>
+        <span class="key">chrys</span>:
+          <span class="key">sessions_dir</span>: <span class="val">""</span>            <span class="comment"># 空 = 自动检测</span>
+
+      <span class="key">filter</span>:
+        <span class="key">min_messages</span>: <span class="val">5</span>
+        <span class="key">min_tools</span>: <span class="val">3</span>
+
+      <span class="key">output</span>:
+        <span class="key">skill_output_dir</span>: <span class="val">~/.trace2skill/skills</span>
+        <span class="key">max_rules_per_skill</span>: <span class="val">15</span>
+        <span class="key">format</span>: <span class="val">skill_md</span>              <span class="comment"># skill_md | knowledge_md</span>
+
+      <span class="key">concurrency</span>:
+        <span class="key">workers</span>: <span class="val">1</span>                     <span class="comment"># 并发 worker 数，1 = 串行</span>
+
+      <span class="key">scheduler</span>:
+        <span class="key">enabled</span>: <span class="val">false</span>
+        <span class="key">cron</span>: <span class="val">"0 3 * * *"</span>            <span class="comment"># 每天凌晨 3 点</span>
+        <span class="key">strategy</span>: <span class="val">incremental</span>
+        <span class="key">min_new_sessions</span>: <span class="val">3</span>
+        <span class="key">max_sessions_per_run</span>: <span class="val">20</span>
+        <span class="key">max_cost_per_run</span>: <span class="val">1.0</span>
+        <span class="key">max_runtime_minutes</span>: <span class="val">30</span>
+    </div>
+  </div>
+
+  <!-- ── Appendix: Key List ── -->
+  <div class="section" id="appendix-keys">
+    <h2>可配置 Key 列表</h2>
+    <p class="desc">可通过 <code>trace2skill config set</code> 设置的所有 key。</p>
+
+    <table class="key-table">
+      <thead>
+        <tr><th>Key</th><th>类型</th><th>说明</th></tr>
+      </thead>
+      <tbody>
+        <tr><td colspan="3" class="group-label">快速模型 (fast)</td></tr>
+        <tr><td><code>fast.model</code></td><td>str</td><td>模型名称</td></tr>
+        <tr><td><code>fast.max_tokens</code></td><td>int</td><td>最大输出 token 数</td></tr>
+        <tr><td><code>fast.api_key</code></td><td>str</td><td>API 密钥（推荐放 .env）</td></tr>
+        <tr><td><code>fast.base_url</code></td><td>str</td><td>API 基础地址</td></tr>
+        <tr><td><code>fast.verify_ssl</code></td><td>bool</td><td>是否验证 SSL 证书</td></tr>
+        <tr><td><code>fast.proxy</code></td><td>str</td><td>代理地址</td></tr>
+        <tr><td><code>fast.proxy_bypass</code></td><td>str</td><td>不走代理的 host 正则</td></tr>
+        <tr><td><code>fast.timeout</code></td><td>float</td><td>请求超时（秒）</td></tr>
+        <tr><td><code>fast.connect_timeout</code></td><td>float</td><td>连接超时（秒）</td></tr>
+        <tr><td><code>fast.user_agent</code></td><td>str</td><td>User-Agent 头</td></tr>
+        <tr><td><code>fast.max_rpm</code></td><td>int</td><td>每分钟最大请求数（0=不限）</td></tr>
+        <tr><td><code>fast.max_concurrency</code></td><td>int</td><td>最大并发请求数（0=不限）</td></tr>
+
+        <tr><td colspan="3" class="group-label">强力模型 (strong)</td></tr>
+        <tr><td><code>strong.model</code></td><td>str</td><td>模型名称</td></tr>
+        <tr><td><code>strong.max_tokens</code></td><td>int</td><td>最大输出 token 数</td></tr>
+        <tr><td><code>strong.api_key</code></td><td>str</td><td>API 密钥</td></tr>
+        <tr><td><code>strong.base_url</code></td><td>str</td><td>API 基础地址</td></tr>
+        <tr><td><code>strong.verify_ssl</code></td><td>bool</td><td>是否验证 SSL 证书</td></tr>
+        <tr><td><code>strong.proxy</code></td><td>str</td><td>代理地址</td></tr>
+        <tr><td><code>strong.proxy_bypass</code></td><td>str</td><td>不走代理的 host 正则</td></tr>
+        <tr><td><code>strong.timeout</code></td><td>float</td><td>请求超时（秒）</td></tr>
+        <tr><td><code>strong.connect_timeout</code></td><td>float</td><td>连接超时（秒）</td></tr>
+        <tr><td><code>strong.user_agent</code></td><td>str</td><td>User-Agent 头</td></tr>
+        <tr><td><code>strong.max_rpm</code></td><td>int</td><td>每分钟最大请求数（0=不限）</td></tr>
+        <tr><td><code>strong.max_concurrency</code></td><td>int</td><td>最大并发请求数（0=不限）</td></tr>
+
+        <tr><td colspan="3" class="group-label">数据源 (source)</td></tr>
+        <tr><td><code>source.type</code></td><td>str</td><td>数据源类型：opencode | chrys</td></tr>
+        <tr><td><code>source.opencode.db_path</code></td><td>str</td><td>OpenCode 数据库路径</td></tr>
+        <tr><td><code>source.opencode.export_command</code></td><td>str</td><td>OpenCode 导出命令</td></tr>
+        <tr><td><code>source.chrys.sessions_dir</code></td><td>str</td><td>Chrys 会话目录</td></tr>
+
+        <tr><td colspan="3" class="group-label">输出 (output)</td></tr>
+        <tr><td><code>output.format</code></td><td>str</td><td>输出格式：skill_md | knowledge_md</td></tr>
+        <tr><td><code>output.skill_output_dir</code></td><td>str</td><td>技能文件输出目录</td></tr>
+        <tr><td><code>output.max_rules_per_skill</code></td><td>int</td><td>每个技能最多规则数</td></tr>
+
+        <tr><td colspan="3" class="group-label">并发 (concurrency)</td></tr>
+        <tr><td><code>concurrency.workers</code></td><td>int</td><td>并发 worker 数，1 = 串行</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ── Appendix: Output Structure ── -->
+  <div class="section" id="appendix-output">
+    <h2>输出目录结构</h2>
+    <p class="desc">蒸馏结果按项目 + 主题组织，每个主题生成独立的 SKILL.md 文件。</p>
+
+    <div class="config-tree">
+      ~/.trace2skill/skills/
+      └── <span class="key">my-project/</span>
+          ├── <span class="key">jwt-auth/</span>
+          │   └── SKILL.md              <span class="comment"># JWT 认证相关技能</span>
+          ├── <span class="key">redis-debug/</span>
+          │   └── SKILL.md              <span class="comment"># Redis 调试经验</span>
+          ├── <span class="key">project-setup/</span>
+          │   └── project_knowledge.md  <span class="comment"># 项目级知识（knowledge_md 格式）</span>
+          └── <span class="key">api-design/</span>
+              └── SKILL.md              <span class="comment"># API 设计最佳实践</span>
+    </div>
+
+    <div class="cmd" style="margin-top:24px">
+      <div class="cmd-header">
+        <span class="cmd-name">SKILL.md 示例</span>
+        <span class="cmd-title">结构化技能文件格式</span>
+      </div>
+      <div class="cmd-body">
+        <pre>---
+topic_id: jwt-auth
+topic_name: JWT Authentication
+session_count: 3
+updated: 2026-05-06
+---
+
+# JWT Authentication
+
+## ALWAYS
+- Always set short expiry (15min) on access tokens
+- Always use RS256 or ES256 for production signing
+
+## NEVER
+- Never store sensitive data in JWT payload
+- Never use symmetric signing (HS256) across services
+
+## FACT
+- JWT refresh tokens should be stored in httpOnly cookies
+- Token revocation requires a server-side blocklist</pre>
+      </div>
+    </div>
+  </div>
+
+</main>
+</div>
+
+<footer>
+  <p><a href="index.html">Trace2Skill Distiller</a> &middot; 从 Coding Agent 会话轨迹中蒸馏可复用技能</p>
+</footer>
+
+<script>
+// Sidebar scroll tracking
+(function() {
+  const sections = document.querySelectorAll('.section[id]');
+  const links = document.querySelectorAll('.sidebar a[data-section]');
+
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const id = entry.target.id;
+        links.forEach(link => {
+          link.classList.toggle('active', link.dataset.section === id);
+        });
+      }
+    });
+  }, {
+    rootMargin: '-80px 0px -60% 0px',
+    threshold: 0
+  });
+
+  sections.forEach(section => observer.observe(section));
+
+  // Close mobile sidebar on link click
+  links.forEach(link => {
+    link.addEventListener('click', () => {
+      document.querySelector('.sidebar').classList.remove('open');
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

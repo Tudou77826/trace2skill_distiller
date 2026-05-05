@@ -23,6 +23,8 @@ class LLMConfig(BaseModel):
     connect_timeout: float = 10.0
     extra_headers: dict[str, str] = Field(default_factory=dict)
     user_agent: str = "curl/8.0"
+    max_rpm: int = 0          # 0 = unlimited; max requests per minute
+    max_concurrency: int = 0  # 0 = unlimited; max concurrent requests
 
     @classmethod
     def from_yaml(cls, data: dict, defaults: "LLMConfig | None" = None) -> "LLMConfig":
@@ -40,6 +42,8 @@ class LLMConfig(BaseModel):
             connect_timeout=data.get("connect_timeout", d.connect_timeout if d else 10.0),
             extra_headers=data.get("extra_headers", d.extra_headers if d else {}),
             user_agent=data.get("user_agent", d.user_agent if d else "curl/8.0"),
+            max_rpm=data.get("max_rpm", d.max_rpm if d else 0),
+            max_concurrency=data.get("max_concurrency", d.max_concurrency if d else 0),
         )
 
 
@@ -85,7 +89,7 @@ class OutputConfig(BaseModel):
 
 class ConcurrencyConfig(BaseModel):
     """Concurrency settings for parallel LLM processing."""
-    workers: int = 3  # number of parallel workers; 1 = sequential
+    workers: int = 1  # number of parallel workers; 1 = sequential (safe default)
 
 
 class SchedulerConfig(BaseModel):
@@ -263,7 +267,7 @@ def init_default_config(
             "cron": "0 3 * * *",
         },
         "concurrency": {
-            "workers": 3,
+            "workers": 1,
         },
     }
     config_path = config_dir / "config.yaml"
@@ -291,6 +295,8 @@ _CONFIG_KEY_MAP: dict[str, tuple[list[str], type]] = {
     "fast.timeout": (["models", "fast", "timeout"], float),
     "fast.connect_timeout": (["models", "fast", "connect_timeout"], float),
     "fast.user_agent": (["models", "fast", "user_agent"], str),
+    "fast.max_rpm": (["models", "fast", "max_rpm"], int),
+    "fast.max_concurrency": (["models", "fast", "max_concurrency"], int),
     "strong.model": (["models", "strong", "model"], str),
     "strong.max_tokens": (["models", "strong", "max_tokens"], int),
     "strong.api_key": (["models", "strong", "api_key"], str),
@@ -301,6 +307,8 @@ _CONFIG_KEY_MAP: dict[str, tuple[list[str], type]] = {
     "strong.timeout": (["models", "strong", "timeout"], float),
     "strong.connect_timeout": (["models", "strong", "connect_timeout"], float),
     "strong.user_agent": (["models", "strong", "user_agent"], str),
+    "strong.max_rpm": (["models", "strong", "max_rpm"], int),
+    "strong.max_concurrency": (["models", "strong", "max_concurrency"], int),
     "source.type": (["source", "type"], str),
     "source.opencode.db_path": (["source", "opencode", "db_path"], str),
     "source.opencode.export_command": (["source", "opencode", "export_command"], str),

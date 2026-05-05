@@ -305,11 +305,14 @@ class DistillPipeline:
 
         # Build analysis layer
         output_dir = Path(config.output.skill_output_dir).expanduser()
+        analysis_workers = config.concurrency.workers
+        if config.strong_model.max_concurrency > 0:
+            analysis_workers = min(analysis_workers, config.strong_model.max_concurrency)
         analysis = DefaultAnalysisLayer(
             SemanticClusterStrategy(fast_llm, output_dir),
             LLMDistillationStrategy(strong_llm),
             config.analysis,
-            max_workers=config.concurrency.workers,
+            max_workers=analysis_workers,
         )
 
         # Build output layer
