@@ -195,8 +195,9 @@ class DistillConfig(BaseModel):
                 protected_topics=raw.get("protected_topics", []),
             ),
             output=OutputConfig(
-                skill_output_dir=raw.get("skill_output_dir", "~/.trace2skill/skills"),
-                max_rules_per_skill=raw.get("max_rules_per_skill", 15),
+                skill_output_dir=raw.get("output", {}).get("skill_output_dir", "~/.trace2skill/skills"),
+                max_rules_per_skill=raw.get("output", {}).get("max_rules_per_skill", 15),
+                format=raw.get("output", {}).get("format", "skill_md"),
             ),
         )
 
@@ -294,6 +295,9 @@ _CONFIG_KEY_MAP: dict[str, tuple[list[str], type]] = {
     "source.opencode.db_path": (["source", "opencode", "db_path"], str),
     "source.opencode.export_command": (["source", "opencode", "export_command"], str),
     "source.chrys.sessions_dir": (["source", "chrys", "sessions_dir"], str),
+    "output.format": (["output", "format"], str),
+    "output.skill_output_dir": (["output", "skill_output_dir"], str),
+    "output.max_rules_per_skill": (["output", "max_rules_per_skill"], int),
 }
 
 

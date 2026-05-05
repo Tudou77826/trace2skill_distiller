@@ -30,6 +30,17 @@ from ..output.types import (
 )
 
 
+def _fmt_dur(seconds: float) -> str:
+    """Format duration in human-readable form (e.g. '2m30s', '45s')."""
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    minutes, secs = divmod(int(seconds), 60)
+    if minutes < 60:
+        return f"{minutes}m{secs:02d}s"
+    hours, mins = divmod(minutes, 60)
+    return f"{hours}h{mins:02d}m{secs:02d}s"
+
+
 class DistillPipeline:
     """Orchestrates the full distillation workflow using pluggable modules."""
 
@@ -123,11 +134,17 @@ class DistillPipeline:
         console.print("\n[bold]Step 1: Preprocessing (Level 0 → 1 → 2)...[/]")
         step_start = time.monotonic()
         trajectories = self._mining.mine([s.id for s in candidates])
+        step_elapsed = time.monotonic() - step_start
+        cumulative = time.monotonic() - run_start
         report.steps.append(StepTiming(
             name="Preprocessing (L0→L1→L2)",
             start=datetime.now().isoformat(),
-            duration_seconds=time.monotonic() - step_start,
+            duration_seconds=step_elapsed,
         ))
+        console.print(
+            f"  Step 1 done: {_fmt_dur(step_elapsed)} "
+            f"(cumulative: {_fmt_dur(cumulative)})"
+        )
 
         # Collect session entries for report
         for t in trajectories:
@@ -181,9 +198,11 @@ class DistillPipeline:
             output_dir=output_dir,
         )
 
+        step_elapsed = time.monotonic() - step_start
+        cumulative = time.monotonic() - run_start
         report.steps.append(StepTiming(
             name="Topic Clustering + Distillation",
-            duration_seconds=time.monotonic() - step_start,
+            duration_seconds=step_elapsed,
         ))
         report.topics_found = len(analysis_result.clustering.clusters)
         report.unclustered_count = len(analysis_result.clustering.unclustered)
@@ -192,6 +211,10 @@ class DistillPipeline:
                       f"({len(analysis_result.clustering.unclustered)} unclustered)")
         for c in analysis_result.clustering.clusters:
             console.print(f"    - {c.topic_name} ({len(c.session_ids)} sessions)")
+        console.print(
+            f"  Step 1.5+2 done: {_fmt_dur(step_elapsed)} "
+            f"(cumulative: {_fmt_dur(cumulative)})"
+        )
 
         total_rules = sum(len(s.rules) for s in analysis_result.skills)
         report.total_rules = total_rules
@@ -248,6 +271,10 @@ class DistillPipeline:
             name="Write SKILL.md Files",
             duration_seconds=time.monotonic() - step_start,
         ))
+        console.print(
+            f"  Step 3 done: {_fmt_dur(time.monotonic() - step_start)} "
+            f"(total: {_fmt_dur(time.monotonic() - run_start)})"
+        )
 
         console.print(Panel(
             f"Sessions analyzed: {len(trajectories)} "

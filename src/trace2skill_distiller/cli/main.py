@@ -11,6 +11,7 @@ from pathlib import Path
 
 import click
 from rich.panel import Panel
+from rich.table import Table
 
 from ..core.config import DistillConfig, LLMConfig, init_default_config, set_config_value
 from ..core.console import console
@@ -37,7 +38,7 @@ def _load_config() -> DistillConfig:
 @click.group()
 @click.version_option("0.1.0")
 def cli():
-    """Trace2Skill Distiller — 从 OpenCode 会话轨迹中蒸馏可复用的技能。
+    """Trace2Skill Distiller — 从 Coding Agent 会话轨迹中蒸馏可复用的技能。
 
     \b
     处理流水线:
@@ -57,7 +58,7 @@ def cli():
 
     \b
     配置文件: ~/.trace2skill/config.yaml
-    输出目录: ~/.trace2skill/skills/<project>/<topic-id>/SKILL.md
+    输出目录: ~/.trace2skill/skills/<project>/
     """
     pass
 
@@ -114,6 +115,12 @@ def init(
 @click.option("--step", type=int, help="执行到指定步骤后停止: 1=仅预处理, 2=蒸馏（不合并）")
 @click.option("--dry-run", is_flag=True, help="仅展示蒸馏规则，不写入文件")
 @click.option("--incremental", is_flag=True, help="仅处理上次运行之后的新会话")
+@click.option("--source", "source_type",
+              type=click.Choice(["opencode", "chrys"], case_sensitive=False),
+              help="覆盖配置的数据源类型")
+@click.option("--format", "output_format",
+              type=click.Choice(["skill_md", "knowledge_md"], case_sensitive=False),
+              help="覆盖配置的输出格式")
 def distill(
     project: str | None,
     session_id: str | None,
@@ -122,8 +129,10 @@ def distill(
     step: int | None,
     dry_run: bool,
     incremental: bool,
+    source_type: str | None,
+    output_format: str | None,
 ):
-    """从 OpenCode 会话轨迹中蒸馏可复用技能。
+    """从 Coding Agent 会话轨迹中蒸馏可复用技能。
 
     \b
     完整流水线包含 4 个步骤:
@@ -135,6 +144,11 @@ def distill(
     使用 --step 可提前终止，--dry-run 可预览而不写入。
     """
     config = _load_config()
+    # Apply CLI overrides
+    if source_type:
+        config.source.type = source_type
+    if output_format:
+        config.output.format = output_format
     pipeline = DistillPipeline.from_config(config)
 
     # Handle incremental
@@ -150,6 +164,87 @@ def distill(
         since=since_ts,
         step=step,
         dry_run=dry_run,
+    )
+
+
+# ── sessions ──
+
+@cli.command()
+@click.option("--project", "-p", help="按项目名称过滤（子串匹配）")
+@click.option("--top", type=int, default=20, help="最多显示 N 个会话（默认 20）")
+@click.option("--all", "show_all", is_flag=True, help="显示全部会话（不过滤低质量）")
+def sessions(project: str | None, top: int, show_all: bool):
+    """列出可用会话（纯元数据，不调用 LLM）。
+
+    从数据源读取会话列表，显示 id、标题、项目、消息数、
+    工具调用数等基本信息。可按项目过滤。
+
+    \b
+    示例:
+      $ trace2skill sessions                     # 默认显示 top 20
+      $ trace2skill sessions -p my-project       # 按项目过滤
+      $ trace2skill sessions --top 5             # 只看最活跃的 5 个
+      $ trace2skill sessions --all               # 包含低质量会话
+    """
+    config = _load_config()
+    source = create_source(config.source)
+
+    sessions_meta = source.list_sessions(project=project)
+    if not sessions_meta:
+        console.print("[yellow]No sessions found.[/]")
+        return
+
+    # Sort by msg_count desc, take top N first (before counting tools)
+    sessions_meta.sort(key=lambda s: s.msg_count, reverse=True)
+    total = len(sessions_meta)
+    sessions_meta = sessions_meta[:top]
+
+    # Count tools only for displayed sessions
+    for s in sessions_meta:
+        s.tool_count = source.count_tools(s.id)
+
+    # Filter by quality unless --all
+    if not show_all:
+        sessions_meta = [
+            s for s in sessions_meta
+            if s.msg_count >= config.filter.min_messages
+            and s.tool_count >= config.filter.min_tools
+        ]
+
+    if not sessions_meta:
+        console.print(f"[yellow]No sessions pass quality threshold "
+                      f"(min {config.filter.min_messages} msgs, "
+                      f"{config.filter.min_tools} tools). "
+                      f"Use --all to see all.[/]")
+        return
+
+    table = Table(title=f"Sessions ({len(sessions_meta)}/{total})")
+    table.add_column("#", width=3, style="dim")
+    table.add_column("Session ID", width=20)
+    table.add_column("Title", width=40)
+    table.add_column("Project", width=15)
+    table.add_column("Msgs", width=5, justify="right")
+    table.add_column("Tools", width=5, justify="right")
+    table.add_column("Date", width=12)
+
+    for i, s in enumerate(sessions_meta):
+        date_str = (
+            datetime.fromtimestamp(s.timestamp).strftime("%Y-%m-%d")
+            if s.timestamp else ""
+        )
+        table.add_row(
+            str(i + 1),
+            s.id[:20],
+            (s.title or "")[:40],
+            (s.project or "")[:15],
+            str(s.msg_count),
+            str(s.tool_count),
+            date_str,
+        )
+
+    console.print(table)
+    console.print(
+        "\n[dim]Use 'trace2skill distill -s <ID>' to distill a specific session.[/]"
     )
 
 
@@ -210,6 +305,11 @@ def inspect(session_id: str):
         for lesson in result.lessons_learned:
             console.print(f"  - {lesson}")
 
+    if result.discoveries:
+        console.print("\n[bold]Discoveries:[/]")
+        for d in result.discoveries:
+            console.print(f"  - {d}")
+
     # Print LLM stats
     fast_stats = fast_llm.reset_stats()
     console.print(f"\n[dim]Fast LLM: {fast_stats['calls']} calls, "
@@ -240,9 +340,12 @@ def status():
     # Show skill files
     skill_dir = Path.home() / ".trace2skill" / "skills"
     if skill_dir.exists():
-        skills = list(skill_dir.rglob("*/SKILL.md"))
+        skills = sorted(
+            list(skill_dir.rglob("SKILL.md")) + list(skill_dir.rglob("*_knowledge.md")),
+            key=lambda p: str(p),
+        )
         if skills:
-            console.print(f"\n[bold]Topic skills ({len(skills)}):[/]")
+            console.print(f"\n[bold]Skill files ({len(skills)}):[/]")
             for s in skills:
                 size = s.stat().st_size
                 console.print(f"  {s.relative_to(skill_dir)} ({size} bytes)")
@@ -371,7 +474,6 @@ def schedule():
     \b
     子命令:
       start   启动调度守护进程（前台运行）
-      stop    提示如何停止（Ctrl+C 终止进程）
       status  查看调度器配置和状态
     """
     pass
@@ -408,16 +510,6 @@ def schedule_start():
             time.sleep(60)
     except KeyboardInterrupt:
         console.print("\n[yellow]Scheduler stopped.[/]")
-
-
-@schedule.command("stop")
-def schedule_stop():
-    """停止正在运行的调度守护进程。
-
-    调度器在前台运行，需在其终端按 Ctrl+C 停止。
-    此命令仅作为提醒。
-    """
-    console.print("[yellow]Manual stop — kill the running process (Ctrl+C).[/]")
 
 
 @schedule.command("status")

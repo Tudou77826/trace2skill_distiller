@@ -2,6 +2,16 @@
 
 from __future__ import annotations
 
+from rich.progress import (
+    Progress,
+    BarColumn,
+    MofNCompleteColumn,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+
 from ...llm import LLMClient
 from ...core.console import console
 from ...core.utils import estimate_tokens, truncate_to_token_budget
@@ -146,17 +156,24 @@ class LLMDistillationStrategy:
         clusters: list[TopicCluster],
     ) -> list[TopicSkill]:
         skills = []
-        for cluster in clusters:
-            try:
-                console.print(f"  Distilling topic: [cyan]{cluster.topic_name}[/] ({len(cluster.session_ids)} sessions)...")
-                skill = self.distill_topic(trajectories, cluster)
-                if skill and (skill.rules or skill.body):
-                    skills.append(skill)
-                    console.print(f"    -> type={skill.skill_type}, {len(skill.rules)} rules, body={len(skill.body)} chars")
-                else:
-                    console.print(f"    -> skipped (no content)")
-            except Exception as e:
-                console.print(f"    -> [red]error: {e}[/]")
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Distilling topics", total=len(clusters))
+            for cluster in clusters:
+                try:
+                    skill = self.distill_topic(trajectories, cluster)
+                    if skill and (skill.rules or skill.body):
+                        skills.append(skill)
+                except Exception:
+                    pass
+                progress.advance(task)
         return skills
 
 
