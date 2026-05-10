@@ -2,7 +2,7 @@
 
 **从 AI 编程会话中自动提炼可复用的技能知识。**
 
-分析你在 [OpenCode](https://github.com/opencode-ai/opencode) 中的编程会话记录，用 LLM 提取可操作的实践经验和技能规则，写入 `SKILL.md` 供 AI 编程助手自动发现和复用。
+分析你的 AI 编程会话记录（支持 [OpenCode](https://github.com/opencode-ai/opencode) 和 [Chrys](https://github.com/inference-gateway/chrys)），用 LLM 提取可操作的实践经验和技能规则，写入 `SKILL.md` 供 AI 编程助手自动发现和复用。
 
 ## 设计理念
 
@@ -13,7 +13,7 @@ AI 编程助手每天都在帮你写代码、调 Bug、做调研——但交互�
 ## 处理流水线
 
 ```
-OpenCode 会话历史
+OpenCode / Chrys 会话历史
        │
        ▼
 ┌──────────────────────────────────────────────┐
@@ -96,7 +96,7 @@ OpenCode 会话历史
 | 模块 | Protocol | 当前实现 | 可扩展为 |
 |------|----------|----------|----------|
 | LLM 接驳 | `LLMProvider` | `OpenAICompatibleProvider` (httpx) | Anthropic、Azure、自定义 HTTP |
-| 数据采集 | `SessionSource` | `OpenCodeSource` (SQLite) | Claude Code JSONL、JSON 文件、API |
+| 数据采集 | `SessionSource` | `OpenCodeSource` (SQLite)、`ChrysSource` (JSON) | Claude Code JSONL、其他 Agent |
 | 聚类策略 | `ClusterStrategy` | `SemanticClusterStrategy` (LLM) | Embedding 向量聚类、关键词匹配 |
 | 蒸馏策略 | `DistillationStrategy` | `LLMDistillationStrategy` | 代码审查分析、架构决策提取 |
 | 技能格式 | `SkillFormatter` | `SkillMdFormatter` (SKILL.md) | JSON、Confluence Wiki |
@@ -314,7 +314,7 @@ scheduler:
   cron: "0 3 * * *"
 
 output:
-  format: "skill_md"
+  format: "knowledge_md"
   skill_output_dir: "~/.trace2skill/skills"
   max_rules_per_skill: 15
 
@@ -354,7 +354,8 @@ src/trace2skill_distiller/
 │   ├── types.py                     # Session, TrajectorySummary, CleanedSession
 │   ├── sources/
 │   │   ├── base.py                  # Protocol: SessionSource
-│   │   └── opencode.py             # OpenCode SQLite + CLI export
+│   │   ├── opencode.py             # OpenCode SQLite + CLI export
+│   │   └── chrys.py                # Chrys JSON 文件源
 │   ├── preprocess/
 │   │   ├── compress.py              # L0 智能压缩 (纯规则)
 │   │   ├── extract.py               # L1/L2 LLM 提取
@@ -386,8 +387,7 @@ src/trace2skill_distiller/
 │   └── pipeline.py                  # DistillPipeline (组合四大模块)
 │
 └── cli/
-    └── main.py                      # Click CLI (distill/inspect/status/config/schedule)
-```
+    └── main.py                      # Click CLI (init/config/doctor/sessions/inspect/run/runs)
 ```
 
 ## 可靠性
