@@ -86,7 +86,23 @@ class DistillPipeline:
 
         # ── Step 0: List sessions ──
         if session_id:
-            sessions_meta = [SessionMeta(id=session_id, title="specified session", msg_count=999)]
+            # Fetch real metadata for the specified session
+            source = create_source(self._config.source)
+            raw = source.get_session(session_id)
+            if raw:
+                tool_count = source.count_tools(session_id)
+                msg_count = len(raw.messages)
+                sessions_meta = [SessionMeta(
+                    id=session_id,
+                    title=raw.info.title or "",
+                    project=raw.project_name or "",
+                    msg_count=msg_count,
+                    tool_count=tool_count,
+                    timestamp=raw.info.time.get("created", 0),
+                )]
+            else:
+                # Fallback: session exists in list but get_session returned nothing
+                sessions_meta = [SessionMeta(id=session_id, title="(specified session)")]
         else:
             sessions_meta = self._mining.list_available(project=project, since=None)
 
@@ -103,7 +119,7 @@ class DistillPipeline:
         # ── Filter candidates ──
         table = Table(title="Session Candidates")
         table.add_column("#", width=3)
-        table.add_column("Session ID", width=20)
+        table.add_column("Session ID")
         table.add_column("Title", width=40)
         table.add_column("Msgs", width=5)
         table.add_column("Tools", width=5)
@@ -117,7 +133,7 @@ class DistillPipeline:
         for i, s in enumerate(candidates):
             table.add_row(
                 str(i + 1),
-                s.id[:20],
+                s.id,
                 (s.title or "")[:40],
                 str(s.msg_count),
                 str(s.tool_count),

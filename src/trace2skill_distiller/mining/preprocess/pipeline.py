@@ -3,17 +3,8 @@
 from __future__ import annotations
 
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
-from rich.progress import (
-    Progress,
-    BarColumn,
-    MofNCompleteColumn,
-    SpinnerColumn,
-    TextColumn,
-    TimeElapsedColumn,
-    TimeRemainingColumn,
-)
 
 from ...llm import LLMClient
 from ...core.config import DistillConfig
@@ -30,6 +21,17 @@ from .extract import (
 logger = logging.getLogger(__name__)
 
 
+def _short(sid: str) -> str:
+    return f"{sid[:16]}…"
+
+
+def _fmt_dur(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    m, s = divmod(int(seconds), 60)
+    return f"{m}m{s:02d}s"
+
+
 def run_pipeline(
     session_id: str,
     fast_llm: LLMClient,
@@ -39,43 +41,47 @@ def run_pipeline(
     quiet: bool = False,
 ) -> TrajectorySummary | None:
     """Run full Level 0 → 1 → 2 pipeline on a single session."""
-    if not quiet:
-        console.print(f"  Exporting session [cyan]{session_id}[/]...")
-    session = source.get_session(session_id)
+    tag = _short(session_id)
+    say = logger.info if quiet else (lambda msg: console.print(f"    {msg}"))
 
+    # ── L0: Compress ──
+    t0 = time.monotonic()
+    say(f"[{tag}] L0 compress...")
+    session = source.get_session(session_id)
     cleaned = preprocess(session)
 
     cfg = config or DistillConfig.load()
     if not should_process(cleaned, cfg.filter.min_messages, cfg.filter.min_tools):
-        if not quiet:
-            console.print(f"  [dim]Skipped: {cleaned.message_count} msgs, {cleaned.tool_count} tools[/]")
+        say(f"[{tag}] skipped: {cleaned.message_count} msgs, {cleaned.tool_count} tools")
         return None
 
-    if not quiet:
-        console.print(
-            f"  Level 0 done: {cleaned.message_count} msgs, "
-            f"{cleaned.tool_count} tools, "
-            f"{len(cleaned.user_anchors)} user anchors"
-        )
+    say(f"[{tag}] L0 done {_fmt_dur(time.monotonic()-t0)}: "
+        f"{cleaned.message_count} msgs, {cleaned.tool_count} tools, "
+        f"{len(cleaned.user_anchors)} anchors")
 
+    # ── L1a: Intent boundaries ──
+    t1 = time.monotonic()
+    say(f"[{tag}] L1a detect boundaries...")
     blocks = detect_intent_boundaries(cleaned, fast_llm)
-    if not quiet:
-        console.print(f"  Level 1a: detected {len(blocks)} intent blocks")
+    say(f"[{tag}] L1a done {_fmt_dur(time.monotonic()-t1)}: {len(blocks)} blocks")
 
+    # ── L1b: Per-block extraction ──
     block_summaries = []
-    for block in blocks:
+    for i, block in enumerate(blocks):
+        tb = time.monotonic()
+        say(f"[{tag}] L1b block {i+1}/{len(blocks)}: {block.intent[:50]}")
         summary = extract_block_summary(cleaned, block, fast_llm)
         block_summaries.append(summary)
-        if not quiet:
-            console.print(f"    Block {block.block_id}: {block.intent[:50]}")
+        say(f"[{tag}] L1b block {i+1} done {_fmt_dur(time.monotonic()-tb)}")
 
+    # ── L2: Aggregate ──
+    t2 = time.monotonic()
+    say(f"[{tag}] L2 aggregate...")
     trajectory = aggregate_session_summary(cleaned, block_summaries, fast_llm)
-    if not quiet:
-        console.print(
-            f"  Level 2 done: [green]{trajectory.label}[/] "
-            f"(score: {trajectory.label_score:.2f})"
-        )
+    say(f"[{tag}] L2 done {_fmt_dur(time.monotonic()-t2)}: "
+        f"{trajectory.label} ({trajectory.label_score:.2f})")
 
+    say(f"[{tag}] total {_fmt_dur(time.monotonic()-t0)}")
     return trajectory
 
 
@@ -89,52 +95,39 @@ def run_batch(
 ) -> list[TrajectorySummary]:
     """Run pipeline on multiple sessions, optionally in parallel."""
     results: list[TrajectorySummary] = []
-    desc = f"Preprocessing [{max_workers}w]" if max_workers > 1 else "Preprocessing"
+    total = len(session_ids)
+    # Always use sequential if <= 1 session — gives better logs and no overhead
+    effective_workers = max_workers if total > 1 else 1
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[bold]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TimeElapsedColumn(),
-        TimeRemainingColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task(desc, total=len(session_ids))
-
-        if max_workers <= 1:
-            # Sequential mode
+    if effective_workers <= 1:
+        for idx, sid in enumerate(session_ids, 1):
+            console.print(f"  [bold][{idx}/{total}][/] {sid}")
+            try:
+                result = run_pipeline(sid, fast_llm, source, config, quiet=False)
+                if result:
+                    results.append(result)
+            except Exception as e:
+                logger.warning("Session %s failed: %s", sid, e)
+                console.print(f"    [red]Failed: {e}[/]")
+    else:
+        console.print(f"  Parallel preprocessing with {effective_workers} workers...")
+        with ThreadPoolExecutor(max_workers=effective_workers) as pool:
+            futures = {}
             for sid in session_ids:
+                future = pool.submit(
+                    run_pipeline, sid, fast_llm, source, config, quiet=True,
+                )
+                futures[future] = sid
+
+            for future in as_completed(futures):
+                sid = futures[future]
                 try:
-                    result = run_pipeline(sid, fast_llm, source, config, quiet=True)
+                    result = future.result()
                     if result:
                         results.append(result)
+                    console.print(f"    [green]done[/]: {_short(sid)}")
                 except Exception as e:
                     logger.warning("Session %s failed: %s", sid, e)
-                progress.advance(task)
-        else:
-            # Parallel mode
-            logger.info("Starting parallel preprocessing with %d workers", max_workers)
-            with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = {}
-                for sid in session_ids:
-                    future = pool.submit(
-                        run_pipeline, sid, fast_llm, source, config, quiet=True,
-                    )
-                    futures[future] = sid
+                    console.print(f"    [red]failed[/]: {_short(sid)}: {e}")
 
-                for future in as_completed(futures):
-                    sid = futures[future]
-                    try:
-                        result = future.result()
-                        if result:
-                            results.append(result)
-                    except Exception as e:
-                        logger.warning("Session %s failed: %s", sid, e)
-                    progress.advance(task)
-
-    logger.info(
-        "Preprocessing done: %d/%d sessions produced results",
-        len(results), len(session_ids),
-    )
     return results

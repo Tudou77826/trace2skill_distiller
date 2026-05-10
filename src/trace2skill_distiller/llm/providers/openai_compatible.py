@@ -90,6 +90,7 @@ class OpenAICompatibleProvider:
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens or self._max_tokens,
+            "enable_thinking": False,
         }
 
         resp = self._client.post(

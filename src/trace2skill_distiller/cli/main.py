@@ -120,10 +120,16 @@ def _display_output_format(output_format: str) -> str:
 
 
 def _fmt_timestamp(ts: int) -> str:
-    """Format source timestamps safely."""
+    """Format source timestamps safely (handles both seconds and milliseconds)."""
     if not ts:
         return ""
-    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+    # Auto-detect milliseconds: values > 1e12 are likely ms, not seconds
+    if ts > 1_000_000_000_000:
+        ts = ts // 1000
+    try:
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+    except (OSError, ValueError, OverflowError):
+        return ""
 
 
 @click.group()
@@ -292,6 +298,7 @@ def config_set(key: str, value: str):
         console.print(f"[green]Set {key} = {shown}[/]")
     except ValueError as exc:
         console.print(f"[red]{exc}[/]")
+        raise SystemExit(1)
 
 
 @config.command("edit")
@@ -354,28 +361,30 @@ def sessions_list(project: str | None, limit: int, include_low_quality: bool):
     filtered.sort(key=lambda s: (s.timestamp, s.msg_count, s.tool_count), reverse=True)
     displayed = filtered[:limit]
 
-    table = Table(title=f"Sessions | source={cfg.source.type} | showing {len(displayed)}/{len(filtered)}")
-    table.add_column("#", width=3, style="dim")
-    table.add_column("Session ID", width=20)
-    table.add_column("Title", width=40)
-    table.add_column("Project", width=18)
-    table.add_column("Msgs", width=6, justify="right")
-    table.add_column("Tools", width=6, justify="right")
-    table.add_column("Date", width=12)
+    console.print(
+        f"  [bold]{'#':>3}[/]  "
+        f"[bold]{'Session ID':<36}[/]  "
+        f"[bold]{'Msgs':>4} {'Tools':>5}[/]  "
+        f"[bold]{'Project':<15}[/]  "
+        f"[bold]{'Date':<10}[/]  "
+        f"[bold]Title[/]"
+    )
+    console.print(f"  [dim]{'─' * 120}[/]")
 
     for i, s in enumerate(displayed, start=1):
-        table.add_row(
-            str(i),
-            s.id[:20],
-            (s.title or "")[:40],
-            (s.project or "")[:18],
-            str(s.msg_count),
-            str(s.tool_count),
-            _fmt_timestamp(s.timestamp),
+        console.print(
+            f"  [dim]{i:>3}.[/] [cyan]{s.id}[/]  "
+            f"[dim]msgs={s.msg_count:>4} tools={s.tool_count:>3}[/]  "
+            f"{(s.project or '')[:15]}  "
+            f"[dim]{_fmt_timestamp(s.timestamp)}[/]  "
+            f"{(s.title or '')[:50]}"
         )
 
-    console.print(table)
-    console.print("\n[dim]Use 'trace2skill sessions show <ID>' or 'trace2skill inspect session <ID>' for details.[/]")
+    console.print(
+        f"\n[dim]共 {len(displayed)}/{len(filtered)} 条 | "
+        f"trace2skill inspect session <ID> | "
+        f"trace2skill run -s <ID>[/]"
+    )
 
 
 @sessions.command("show")
@@ -440,11 +449,11 @@ def inspect_session(session_id: str):
         result = run_pipeline(session_id, fast_llm, source, cfg)
     except Exception as exc:
         console.print(f"[red]Error: {exc}[/]")
-        return
+        raise SystemExit(1)
 
     if not result:
         console.print("[yellow]Session did not pass quality filter.[/]")
-        return
+        raise SystemExit(1)
 
     console.print(Panel(
         f"Type: {result.session_type}\n"
@@ -530,7 +539,7 @@ def inspect_run(run_id: str):
     "--output",
     "output_format",
     type=click.Choice(["skill", "knowledge"], case_sensitive=False),
-    default="skill",
+    default="knowledge",
     show_default=True,
     help="输出格式",
 )

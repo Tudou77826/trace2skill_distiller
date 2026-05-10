@@ -113,8 +113,8 @@ class TestSessions:
             result = runner.invoke(cli, ["sessions", "list"])
             assert result.exit_code == 0
             mock_source.list_sessions.assert_called_once_with(project=None)
-            assert "source=chrys" in result.output
             assert "s1" in result.output
+            assert "msgs=" in result.output
 
 
 class TestRun:
