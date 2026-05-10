@@ -129,30 +129,82 @@ trace2skill init \
 
 ## 使用
 
-```bash
-# 预览单个会话的预处理结果
-trace2skill inspect <session-id>
+### CLI 命令地图
 
-# 从指定项目提炼技能
-trace2skill distill --project my-project
+```text
+trace2skill
+├── init
+├── doctor
+├── config
+│   ├── show
+│   ├── set <key> <value>
+│   └── edit
+├── sessions
+│   ├── list [--project <name>] [--limit <n>] [--include-low-quality]
+│   └── show <session-id>
+├── inspect
+│   ├── session <session-id>
+│   └── run <run-id>
+├── run
+│   ├── [--project <name> | --session <id>]
+│   ├── [--mode preprocess|analyze|full]
+│   ├── [--output skill|knowledge]
+│   └── [--preview]
+└── runs
+    ├── list
+    └── show <run-id>
+```
+
+### 命令职责
+
+| 命令 | 用途 |
+|------|------|
+| `trace2skill init` | 初始化配置文件和默认运行设置 |
+| `trace2skill doctor` | 检查当前 source、模型、配置和路径是否可用 |
+| `trace2skill config ...` | 查看或修改当前运行配置 |
+| `trace2skill sessions list` | 列出当前 source 下可用会话 |
+| `trace2skill sessions show <id>` | 查看单个会话的元信息和质量情况 |
+| `trace2skill inspect session <id>` | 查看单个会话的预处理结果 |
+| `trace2skill inspect run <id>` | 查看某次运行的详细摘要 |
+| `trace2skill run ...` | 运行蒸馏流程 |
+| `trace2skill runs list` | 查看历史运行列表 |
+| `trace2skill runs show <id>` | 查看单次运行的统计、报告和输出信息 |
+
+```bash
+# 首次初始化
+trace2skill init
+
+# 检查当前配置、source 和模型设置
+trace2skill doctor
+
+# 查看当前 source 下可用会话
+trace2skill sessions list
+trace2skill sessions list --project my-project
+
+# 查看单个会话元信息
+trace2skill sessions show <session-id>
+
+# 预览单个会话的预处理结果
+trace2skill inspect session <session-id>
+
+# 从当前 source 的指定项目提炼技能
+trace2skill run --project my-project
 
 # 指定单个会话
-trace2skill distill --session <session-id>
+trace2skill run --session <session-id>
 
-# 只做预处理（不调用强模型）
-trace2skill distill --project my-project --step 1
+# 只做预处理
+trace2skill run --project my-project --mode preprocess
 
-# 试运行（展示结果但不写文件）
-trace2skill distill --project my-project --dry-run
+# 只分析主题和规则，不写技能文件
+trace2skill run --project my-project --mode analyze
 
-# 增量处理（只处理上次之后的新会话）
-trace2skill distill --project my-project --incremental
+# 预览模式：不写任何文件或状态
+trace2skill run --project my-project --preview
 
-# 查看提炼历史和已生成的技能
-trace2skill status
-
-# 定时任务（每天凌晨自动提炼）
-trace2skill schedule start
+# 查看历史运行
+trace2skill runs list
+trace2skill runs show <run-id>
 ```
 
 ### 配置管理
@@ -162,16 +214,27 @@ trace2skill schedule start
 trace2skill config show
 
 # 设置单个配置项（点分路径 key）
-trace2skill config set fast.proxy socks5://127.0.0.1:1080
-trace2skill config set fast.proxy_bypass "localhost,127\\.0\\.0\\.1"
-trace2skill config set strong.timeout 180
-trace2skill config set fast.verify_ssl true
+trace2skill config set source.type chrys
+trace2skill config set source.opencode.db_path "D:/data/opencode.db"
+trace2skill config set fast.max_concurrency 4
+trace2skill config set strong.max_concurrency 2
+trace2skill config set output.format knowledge
+trace2skill config set filter.min_messages 8
 
 # 用编辑器直接修改配置文件
 trace2skill config edit
 ```
 
-每次蒸馏完成后生成 HTML 报告至 `~/.trace2skill/reports/`，包含会话筛选、主题分布、规则统计、LLM 开销等。
+CLI 默认始终使用配置里的当前 source、模型级并发限制和输出格式；运行时不会跨多种 coding 软件遍历。同名 `project` 只在当前 source 范围内解释。
+
+并发现在只由模型配置控制：
+
+- `fast.max_concurrency`：控制预处理阶段的并发上限
+- `strong.max_concurrency`：控制蒸馏阶段的并发上限
+- `max_rpm`：控制对应模型的每分钟请求上限
+- 不再提供全局 `workers` 配置
+
+每次非预览运行完成后生成 JSON + HTML 报告至 `~/.trace2skill/reports/`，包含会话筛选、主题分布、规则统计、LLM 开销等。
 
 ## 技能类型
 
@@ -221,6 +284,8 @@ models:
   fast:
     model: "gpt-4o-mini"
     max_tokens: 4096
+    max_concurrency: 4                          # 预处理并发上限
+    max_rpm: 60                                 # 预处理每分钟请求上限，0 表示不限制
     proxy: "socks5://127.0.0.1:1080"          # 可选：代理地址
     proxy_bypass: "localhost,127\\.0\\.0\\.1"   # 可选：不走代理的 host 正则（逗号分隔）
     timeout: 120                               # 可选：请求超时（秒）
@@ -230,9 +295,15 @@ models:
   strong:
     model: "gpt-4o"
     max_tokens: 8192
+    max_concurrency: 2                          # 蒸馏并发上限
+    max_rpm: 20                                 # 蒸馏每分钟请求上限，0 表示不限制
 
-opencode:
-  db_path: "~/.local/share/opencode/opencode.db"
+source:
+  type: "opencode"
+  opencode:
+    db_path: "~/.local/share/opencode/opencode.db"
+  chrys:
+    sessions_dir: ""                            # 留空表示自动探测
 
 filter:
   min_messages: 5
@@ -242,8 +313,11 @@ scheduler:
   enabled: false
   cron: "0 3 * * *"
 
-skill_output_dir: "~/.trace2skill/skills"
-max_rules_per_skill: 15
+output:
+  format: "skill_md"
+  skill_output_dir: "~/.trace2skill/skills"
+  max_rules_per_skill: 15
+
 clustering_max_topics: 8
 ```
 

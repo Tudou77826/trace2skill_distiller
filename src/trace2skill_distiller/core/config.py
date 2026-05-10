@@ -24,7 +24,7 @@ class LLMConfig(BaseModel):
     extra_headers: dict[str, str] = Field(default_factory=dict)
     user_agent: str = "curl/8.0"
     max_rpm: int = 0          # 0 = unlimited; max requests per minute
-    max_concurrency: int = 0  # 0 = unlimited; max concurrent requests
+    max_concurrency: int = 1  # model-level concurrency cap; 1 = sequential safe default
 
     @classmethod
     def from_yaml(cls, data: dict, defaults: "LLMConfig | None" = None) -> "LLMConfig":
@@ -43,7 +43,7 @@ class LLMConfig(BaseModel):
             extra_headers=data.get("extra_headers", d.extra_headers if d else {}),
             user_agent=data.get("user_agent", d.user_agent if d else "curl/8.0"),
             max_rpm=data.get("max_rpm", d.max_rpm if d else 0),
-            max_concurrency=data.get("max_concurrency", d.max_concurrency if d else 0),
+            max_concurrency=data.get("max_concurrency", d.max_concurrency if d else 1),
         )
 
 
@@ -87,11 +87,6 @@ class OutputConfig(BaseModel):
     format: str = "skill_md"  # skill_md | knowledge_md
 
 
-class ConcurrencyConfig(BaseModel):
-    """Concurrency settings for parallel LLM processing."""
-    workers: int = 1  # number of parallel workers; 1 = sequential (safe default)
-
-
 class SchedulerConfig(BaseModel):
     enabled: bool = False
     cron: str = "0 3 * * *"
@@ -113,7 +108,6 @@ class DistillConfig(BaseModel):
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
-    concurrency: ConcurrencyConfig = Field(default_factory=ConcurrencyConfig)
 
     @staticmethod
     def default_config_path() -> Path:
@@ -209,7 +203,6 @@ class DistillConfig(BaseModel):
                 max_rules_per_skill=raw.get("output", {}).get("max_rules_per_skill") or raw.get("max_rules_per_skill", 15),
                 format=raw.get("output", {}).get("format", "skill_md"),
             ),
-            concurrency=ConcurrencyConfig(**raw.get("concurrency", {})),
         )
 
 
@@ -229,8 +222,8 @@ def init_default_config(
     config_dir = Path.home() / ".trace2skill"
     config_dir.mkdir(parents=True, exist_ok=True)
 
-    fast_cfg: dict = {"model": fast_model, "max_tokens": 4096}
-    strong_cfg: dict = {"model": strong_model, "max_tokens": 8192}
+    fast_cfg: dict = {"model": fast_model, "max_tokens": 4096, "max_concurrency": 1, "max_rpm": 0}
+    strong_cfg: dict = {"model": strong_model, "max_tokens": 8192, "max_concurrency": 1, "max_rpm": 0}
     if verify_ssl:
         fast_cfg["verify_ssl"] = True
         strong_cfg["verify_ssl"] = True
@@ -265,9 +258,6 @@ def init_default_config(
         "scheduler": {
             "enabled": False,
             "cron": "0 3 * * *",
-        },
-        "concurrency": {
-            "workers": 1,
         },
     }
     config_path = config_dir / "config.yaml"
@@ -313,10 +303,12 @@ _CONFIG_KEY_MAP: dict[str, tuple[list[str], type]] = {
     "source.opencode.db_path": (["source", "opencode", "db_path"], str),
     "source.opencode.export_command": (["source", "opencode", "export_command"], str),
     "source.chrys.sessions_dir": (["source", "chrys", "sessions_dir"], str),
+    "filter.min_messages": (["filter", "min_messages"], int),
+    "filter.min_tools": (["filter", "min_tools"], int),
+    "analysis.clustering_max_topics": (["clustering_max_topics"], int),
     "output.format": (["output", "format"], str),
     "output.skill_output_dir": (["output", "skill_output_dir"], str),
     "output.max_rules_per_skill": (["output", "max_rules_per_skill"], int),
-    "concurrency.workers": (["concurrency", "workers"], int),
 }
 
 

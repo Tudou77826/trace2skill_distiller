@@ -43,6 +43,7 @@ class TestFromYaml:
         assert cfg.timeout == 120.0
         assert cfg.proxy == ""
         assert cfg.proxy_bypass == ""
+        assert cfg.max_concurrency == 1
 
     def test_fallback_to_defaults_param(self):
         parent = LLMConfig(api_key="sk-parent", proxy="http://p", timeout=99.0)
@@ -167,6 +168,36 @@ class TestSetConfigValue:
         finally:
             DistillConfig.default_config_path = orig
 
+    def test_sets_filter_threshold_keys(self):
+        f = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8")
+        yaml.dump({"filter": {"min_messages": 5, "min_tools": 3}}, f)
+        f.close()
+        orig = DistillConfig.default_config_path
+        DistillConfig.default_config_path = staticmethod(lambda: Path(f.name))
+        try:
+            set_config_value("filter.min_messages", "8")
+            with open(f.name, encoding="utf-8") as fh:
+                data = yaml.safe_load(fh)
+            assert data["filter"]["min_messages"] == 8
+        finally:
+            DistillConfig.default_config_path = orig
+            os.unlink(f.name)
+
+    def test_sets_analysis_clustering_key(self):
+        f = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8")
+        yaml.dump({"clustering_max_topics": 8}, f)
+        f.close()
+        orig = DistillConfig.default_config_path
+        DistillConfig.default_config_path = staticmethod(lambda: Path(f.name))
+        try:
+            set_config_value("analysis.clustering_max_topics", "12")
+            with open(f.name, encoding="utf-8") as fh:
+                data = yaml.safe_load(fh)
+            assert data["clustering_max_topics"] == 12
+        finally:
+            DistillConfig.default_config_path = orig
+            os.unlink(f.name)
+
 
 # ── init_default_config ──
 
@@ -193,6 +224,9 @@ class TestInitDefaultConfig:
             assert strong["verify_ssl"] is True
             assert strong["timeout"] == 60.0
             assert strong["connect_timeout"] == 5.0
+            assert fast["max_concurrency"] == 1
+            assert strong["max_concurrency"] == 1
+            assert data["source"]["type"] == "opencode"
             env_path = tmp_path / ".trace2skill" / ".env"
             assert env_path.exists()
             assert "TRACE2SKILL_API_KEY=sk-test" in env_path.read_text()

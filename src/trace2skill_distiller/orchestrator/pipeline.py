@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 from datetime import datetime
+import json
 from pathlib import Path
 
 from rich.panel import Panel
@@ -20,13 +21,11 @@ from ..mining.types import SessionMeta, TrajectorySummary
 from ..analysis.analysis_facade import AnalysisLayer, DefaultAnalysisLayer
 from ..analysis.clustering.semantic import SemanticClusterStrategy
 from ..analysis.distillation.llm_distill import LLMDistillationStrategy
-from ..analysis.types import TopicSkill
 from ..output.output_facade import OutputLayer, DefaultOutputLayer
 from ..output.formatters.skill_md import SkillMdFormatter, save_trajectories
 from ..output.presenters.html_report import HtmlReportPresenter
-from ..output.state import StateManager
 from ..output.types import (
-    DistillReport, SessionEntry, TopicEntry, StepTiming, LLMUsage, ShapingResult,
+    DistillReport, SessionEntry, TopicEntry, StepTiming, LLMUsage,
 )
 
 
@@ -64,11 +63,13 @@ class DistillPipeline:
         self,
         project: str | None = None,
         session_id: str | None = None,
-        since: int | None = None,
-        step: int | None = None,
-        dry_run: bool = False,
+        mode: str = "full",
+        preview: bool = False,
     ) -> DistillReport:
         """Run the full distillation pipeline."""
+        if mode not in {"preprocess", "analyze", "full"}:
+            raise ValueError(f"Unknown mode: {mode}")
+
         run_id = uuid.uuid4().hex[:8]
         project_name = project or "general"
         report = DistillReport(
@@ -87,11 +88,14 @@ class DistillPipeline:
         if session_id:
             sessions_meta = [SessionMeta(id=session_id, title="specified session", msg_count=999)]
         else:
-            sessions_meta = self._mining.list_available(project=project, since=since)
+            sessions_meta = self._mining.list_available(project=project, since=None)
 
         if not sessions_meta:
             console.print("[yellow]No sessions found.[/]")
-            _finalize_report(report, run_start, self._fast_llm, self._strong_llm, self._config, project_name)
+            _finalize_report(
+                report, run_start, self._fast_llm, self._strong_llm,
+                self._config, project_name, write_files=not preview,
+            )
             return report
 
         report.sessions_total = len(sessions_meta)
@@ -127,7 +131,10 @@ class DistillPipeline:
 
         if not candidates:
             console.print("[yellow]No suitable sessions for distillation.[/]")
-            _finalize_report(report, run_start, self._fast_llm, self._strong_llm, self._config, project_name)
+            _finalize_report(
+                report, run_start, self._fast_llm, self._strong_llm,
+                self._config, project_name, write_files=not preview,
+            )
             return report
 
         # ── Step 1: Preprocessing ──
@@ -177,14 +184,23 @@ class DistillPipeline:
 
         if not trajectories:
             console.print("[yellow]No trajectories passed preprocessing.[/]")
-            _finalize_report(report, run_start, self._fast_llm, self._strong_llm, self._config, project_name)
+            _finalize_report(
+                report, run_start, self._fast_llm, self._strong_llm,
+                self._config, project_name, write_files=not preview,
+            )
             return report
 
-        if step == 1:
-            output_dir = Path(self._config.output.skill_output_dir).expanduser()
-            path = save_trajectories(trajectories, output_dir, project or "all")
-            console.print(f"Trajectories saved to: {path}")
-            _finalize_report(report, run_start, self._fast_llm, self._strong_llm, self._config, project_name)
+        if mode == "preprocess":
+            if preview:
+                console.print("[dim]Preview mode: trajectories not written.[/]")
+            else:
+                output_dir = Path(self._config.output.skill_output_dir).expanduser()
+                path = save_trajectories(trajectories, output_dir, project or "all")
+                console.print(f"Trajectories saved to: {path}")
+            _finalize_report(
+                report, run_start, self._fast_llm, self._strong_llm,
+                self._config, project_name, write_files=not preview,
+            )
             return report
 
         # ── Step 1.5 + 2: Analysis (clustering + distillation) ──
@@ -222,7 +238,10 @@ class DistillPipeline:
 
         if not analysis_result.skills:
             console.print("[yellow]No rules distilled.[/]")
-            _finalize_report(report, run_start, self._fast_llm, self._strong_llm, self._config, project_name)
+            _finalize_report(
+                report, run_start, self._fast_llm, self._strong_llm,
+                self._config, project_name, write_files=not preview,
+            )
             return report
 
         # Collect topic entries for report
@@ -241,13 +260,18 @@ class DistillPipeline:
                 rules=s.rules,
             ))
 
-        if step == 2 or dry_run:
+        if mode == "analyze" or preview:
             for s in analysis_result.skills:
                 console.print(f"\n[bold]Topic: {s.skill_title}[/] ({len(s.rules)} rules)")
                 console.print(f"  {s.summary}")
                 for r in s.rules:
                     console.print(f"  [{r.type}] {r.action} (confidence: {r.confidence:.2f})")
-            _finalize_report(report, run_start, self._fast_llm, self._strong_llm, self._config, project_name)
+            if preview:
+                console.print("[dim]Preview mode: no files, reports, or state were written.[/]")
+            _finalize_report(
+                report, run_start, self._fast_llm, self._strong_llm,
+                self._config, project_name, write_files=not preview,
+            )
             return report
 
         # ── Step 3: Output ──
@@ -287,7 +311,10 @@ class DistillPipeline:
             title="Distillation Complete",
         ))
 
-        _finalize_report(report, run_start, self._fast_llm, self._strong_llm, self._config, project_name)
+        _finalize_report(
+            report, run_start, self._fast_llm, self._strong_llm,
+            self._config, project_name, write_files=True,
+        )
         return report
 
     @classmethod
@@ -305,9 +332,7 @@ class DistillPipeline:
 
         # Build analysis layer
         output_dir = Path(config.output.skill_output_dir).expanduser()
-        analysis_workers = config.concurrency.workers
-        if config.strong_model.max_concurrency > 0:
-            analysis_workers = min(analysis_workers, config.strong_model.max_concurrency)
+        analysis_workers = max(1, config.strong_model.max_concurrency)
         analysis = DefaultAnalysisLayer(
             SemanticClusterStrategy(fast_llm, output_dir),
             LLMDistillationStrategy(strong_llm),
@@ -334,8 +359,9 @@ def _finalize_report(
     strong_llm: LLMClient | None,
     config: DistillConfig,
     project_name: str,
+    write_files: bool,
 ):
-    """Finalize report data and write HTML."""
+    """Finalize report data and optionally write report artifacts."""
     report.finished_at = datetime.now().isoformat()
     report.total_duration_seconds = time.monotonic() - run_start
     report.output_dir = str(Path(config.output.skill_output_dir).expanduser() / project_name)
@@ -357,10 +383,18 @@ def _finalize_report(
             output_tokens=strong_stats["output_tokens"],
         ))
 
-    # Write HTML report
+    if not write_files:
+        return
+
+    # Write JSON + HTML report
     report_dir = Path.home() / ".trace2skill" / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
+    report_json_path = report_dir / f"{report.run_id}.json"
     report_path = report_dir / f"{report.run_id}.html"
+    report_json_path.write_text(
+        json.dumps(report.model_dump(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     presenter = HtmlReportPresenter()
     presenter.present(report, report_path)
     console.print(f"\n[bold green]Report:[/] {report_path}")

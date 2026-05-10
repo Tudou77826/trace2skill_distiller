@@ -1,12 +1,12 @@
-"""Trace2Skill Distiller CLI — thin shell delegating to orchestrator."""
+"""Trace2Skill Distiller CLI."""
 
 from __future__ import annotations
 
-import json
 import logging
 import os
+import platform
+import subprocess
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -18,9 +18,9 @@ from ..core.config import DistillConfig, LLMConfig, init_default_config, set_con
 from ..core.console import console
 from ..llm import LLMClient
 from ..llm.providers.openai_compatible import OpenAICompatibleProvider
-from ..mining.mining_facade import DefaultMiningLayer
 from ..mining.sources import create_source
 from ..orchestrator.pipeline import DistillPipeline
+from ..output.types import DistillReport
 
 
 def _setup_logging() -> None:
@@ -46,254 +46,400 @@ def _load_config() -> DistillConfig:
     return DistillConfig.load()
 
 
+def _mask(s: str | None, visible: int = 4) -> str:
+    """Mask a string, showing only the first `visible` chars."""
+    if not s:
+        return "(not set)"
+    if len(s) <= visible:
+        return "*" * len(s)
+    return s[:visible] + "*" * (len(s) - visible)
+
+
+def _format_llm_panel(label: str, cfg: LLMConfig) -> Panel:
+    """Build a Rich panel for one model config."""
+    return Panel(
+        f"model: {cfg.model}\n"
+        f"max_tokens: {cfg.max_tokens}\n"
+        f"max_concurrency: {cfg.max_concurrency}\n"
+        f"max_rpm: {cfg.max_rpm}\n"
+        f"api_key: {_mask(cfg.api_key)}\n"
+        f"base_url: {cfg.base_url or '(not set)'}\n"
+        f"verify_ssl: {cfg.verify_ssl}\n"
+        f"proxy: {cfg.proxy or '(none)'}\n"
+        f"proxy_bypass: {cfg.proxy_bypass or '(none)'}\n"
+        f"timeout: {cfg.timeout}\n"
+        f"connect_timeout: {cfg.connect_timeout}\n"
+        f"extra_headers: {cfg.extra_headers or '(none)'}\n"
+        f"user_agent: {cfg.user_agent}",
+        title=label,
+    )
+
+
+def _current_source_location(cfg: DistillConfig) -> str:
+    """Return the active source location for display."""
+    if cfg.source.type == "chrys":
+        return cfg.source.chrys.sessions_dir or "(auto-detect)"
+    return cfg.source.opencode.db_path
+
+
+def _report_dir() -> Path:
+    return Path.home() / ".trace2skill" / "reports"
+
+
+def _load_report(run_id: str) -> tuple[Path, DistillReport] | None:
+    """Load a JSON report by run id."""
+    path = _report_dir() / f"{run_id}.json"
+    if not path.exists():
+        return None
+    return path, DistillReport.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def _iter_reports() -> list[tuple[Path, DistillReport]]:
+    """Load all JSON reports, newest first."""
+    report_dir = _report_dir()
+    if not report_dir.exists():
+        return []
+
+    reports: list[tuple[Path, DistillReport]] = []
+    for path in sorted(report_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            reports.append((path, DistillReport.model_validate_json(path.read_text(encoding="utf-8"))))
+        except Exception:
+            continue
+    return reports
+
+
+def _resolve_output_format(output_format: str) -> str:
+    """Map user-facing output choices to internal formatter ids."""
+    return "knowledge_md" if output_format == "knowledge" else "skill_md"
+
+
+def _display_output_format(output_format: str) -> str:
+    """Map internal formatter ids to user-facing labels."""
+    return "knowledge" if output_format == "knowledge_md" else "skill"
+
+
+def _fmt_timestamp(ts: int) -> str:
+    """Format source timestamps safely."""
+    if not ts:
+        return ""
+    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+
+
 @click.group()
 @click.version_option("0.1.0")
 @click.option("--verbose", "-v", is_flag=True, help="显示详细日志（INFO 级别）")
 def cli(verbose: bool):
-    """Trace2Skill Distiller — 从 Coding Agent 会话轨迹中蒸馏可复用的技能。
+    """Trace2Skill Distiller。
 
     \b
-    处理流水线:
-      1. 预处理     — 噪声过滤 (L0) → 快速 LLM 摘要 (L1/L2)
-      2. 主题聚类   — 按技术主题分组（快速 LLM）
-      3. 按主题蒸馏 — 提取技能规则（强力 LLM）
-      4. 写入       — 每个主题生成独立的 .md 技能文件
+    常用流程:
+      $ trace2skill init
+      $ trace2skill config show
+      $ trace2skill sessions list
+      $ trace2skill inspect session <SESSION_ID>
+      $ trace2skill run --project my-project
+      $ trace2skill runs list
 
     \b
-    快速上手:
-      $ trace2skill init                         # 首次初始化（配置 API Key 和模型）
-      $ trace2skill distill                      # 蒸馏全部会话
-      $ trace2skill distill -p my-project        # 按项目过滤
-      $ trace2skill distill -s SESSION_ID        # 指定单个会话
-      $ trace2skill inspect SESSION_ID           # 预览预处理结果
-      $ trace2skill status                       # 查看蒸馏历史
-
-    \b
-    配置文件: ~/.trace2skill/config.yaml
-    输出目录: ~/.trace2skill/skills/<project>/
+    当前数据来源、模型级并发限制等都来自配置文件。
+    `project` 和 `session` 只在当前 source 范围内解释，不会跨多种 coding 软件遍历。
     """
     _setup_logging()
     if verbose:
         logging.getLogger("trace2skill_distiller").setLevel(logging.INFO)
 
 
-# ── init ──
-
 @cli.command()
 @click.option("--api-key", prompt="API Key", help="LLM API 密钥")
 @click.option("--base-url", prompt="Base URL", help="LLM API 基础地址（如 https://api.openai.com/v1）")
-@click.option("--fast-model", default="openai/gpt-oss-120b", help="快速模型（用于 L1/L2 预处理）")
-@click.option("--strong-model", default="openai/gpt-oss-120b", help="强力模型（用于蒸馏和合并）")
-@click.option("--source", "source_type",
-              type=click.Choice(["opencode", "chrys"], case_sensitive=False),
-              default="opencode", help="数据源类型（Coding Agent）")
+@click.option("--fast-model", default="openai/gpt-oss-120b", help="快速模型（用于预处理）")
+@click.option("--strong-model", default="openai/gpt-oss-120b", help="强力模型（用于蒸馏）")
 @click.option("--proxy", default="", help="代理地址（如 socks5://127.0.0.1:1080）")
-@click.option("--proxy-bypass", default="", help="不走代理的 host 正则，逗号分隔（如 localhost,127\\.0\\.0\\.1）")
+@click.option("--proxy-bypass", default="", help="不走代理的 host 正则，逗号分隔")
 @click.option("--verify-ssl/--no-verify-ssl", default=False, help="是否验证 SSL 证书")
 @click.option("--timeout", type=float, default=120.0, help="请求超时（秒）")
 @click.option("--connect-timeout", type=float, default=10.0, help="连接超时（秒）")
 def init(
-    api_key: str, base_url: str, fast_model: str, strong_model: str,
-    source_type: str,
-    proxy: str, proxy_bypass: str, verify_ssl: bool,
-    timeout: float, connect_timeout: float,
+    api_key: str,
+    base_url: str,
+    fast_model: str,
+    strong_model: str,
+    proxy: str,
+    proxy_bypass: str,
+    verify_ssl: bool,
+    timeout: float,
+    connect_timeout: float,
 ):
-    """初始化 trace2skill 配置。
-
-    创建 ~/.trace2skill/config.yaml 和 ~/.trace2skill/.env，
-    写入 API 凭证。首次使用前运行一次即可。
-    """
+    """初始化配置并写入默认运行设置。"""
     path = init_default_config(
-        api_key, base_url, fast_model, strong_model,
-        proxy=proxy, proxy_bypass=proxy_bypass,
-        verify_ssl=verify_ssl, timeout=timeout, connect_timeout=connect_timeout,
-        source_type=source_type,
+        api_key,
+        base_url,
+        fast_model,
+        strong_model,
+        proxy=proxy,
+        proxy_bypass=proxy_bypass,
+        verify_ssl=verify_ssl,
+        timeout=timeout,
+        connect_timeout=connect_timeout,
     )
     console.print(Panel(
         f"Config created: {path}\n"
         f"API key saved to: {path.parent / '.env'}\n"
         f"Fast model: {fast_model}\n"
         f"Strong model: {strong_model}\n"
-        f"Source: {source_type}",
+        f"Source: opencode (default)\n"
+        f"Tip: use 'trace2skill config set source.type chrys' to switch source later.",
         title="Trace2Skill Initialized",
     ))
 
 
-# ── distill ──
-
 @cli.command()
-@click.option("--project", "-p", help="按项目名称过滤（子串匹配）")
-@click.option("--session", "-s", "session_id", help="指定要蒸馏的会话 ID")
-@click.option("--from", "from_date", help="起始日期过滤（格式: YYYY-MM-DD）")
-@click.option("--to", "to_date", help="截止日期过滤（格式: YYYY-MM-DD）")
-@click.option("--step", type=int, help="执行到指定步骤后停止: 1=仅预处理, 2=蒸馏（不合并）")
-@click.option("--dry-run", is_flag=True, help="仅展示蒸馏规则，不写入文件")
-@click.option("--incremental", is_flag=True, help="仅处理上次运行之后的新会话")
-@click.option("--source", "source_type",
-              type=click.Choice(["opencode", "chrys"], case_sensitive=False),
-              help="覆盖配置的数据源类型")
-@click.option("--format", "output_format",
-              type=click.Choice(["skill_md", "knowledge_md"], case_sensitive=False),
-              help="覆盖配置的输出格式")
-@click.option("--workers", "-w", type=int, help="并发 worker 数（覆盖配置）")
-def distill(
-    project: str | None,
-    session_id: str | None,
-    from_date: str | None,
-    to_date: str | None,
-    step: int | None,
-    dry_run: bool,
-    incremental: bool,
-    source_type: str | None,
-    output_format: str | None,
-    workers: int | None,
-):
-    """从 Coding Agent 会话轨迹中蒸馏可复用技能。
+def doctor():
+    """检查当前配置、数据来源和模型基础设置。"""
+    config_path = DistillConfig.default_config_path()
+    env_path = config_path.parent / ".env"
+    cfg = _load_config()
 
-    \b
-    完整流水线包含 4 个步骤:
-      步骤 1  预处理   — 过滤噪声，用快速 LLM 生成摘要
-      步骤 1.5 主题聚类 — 按技术主题对轨迹分组
-      步骤 2  蒸馏     — 按主题提取技能规则（强力 LLM）
-      步骤 3  写入     — 每个主题生成独立的 .md 技能文件
+    checks: list[tuple[str, str, str]] = []
+    checks.append(("config.yaml", "ok" if config_path.exists() else "missing", str(config_path)))
+    checks.append((".env", "ok" if env_path.exists() else "missing", str(env_path)))
+    checks.append(("source.type", "ok", cfg.source.type))
 
-    使用 --step 可提前终止，--dry-run 可预览而不写入。
-    """
-    config = _load_config()
-    # Apply CLI overrides
-    if source_type:
-        config.source.type = source_type
-    if output_format:
-        config.output.format = output_format
-    if workers is not None:
-        config.concurrency.workers = workers
-    pipeline = DistillPipeline.from_config(config)
+    source_location = _current_source_location(cfg)
+    source_path_status = "auto"
+    if source_location != "(auto-detect)":
+        source_path = Path(source_location).expanduser()
+        source_path_status = "ok" if source_path.exists() else "missing"
+        source_location = str(source_path)
+    checks.append(("source.path", source_path_status, source_location))
 
-    # Handle incremental
-    since_ts = None
-    if incremental:
-        from ..output.state import StateManager
-        state_mgr = StateManager()
-        since_ts = state_mgr.get_last_run_ts()
+    checks.append(("fast_model.api_key", "ok" if cfg.fast_model.api_key else "missing", _mask(cfg.fast_model.api_key)))
+    checks.append(("fast_model.base_url", "ok" if cfg.fast_model.base_url else "missing", cfg.fast_model.base_url or "(not set)"))
+    checks.append(("strong_model.model", "ok" if cfg.strong_model.model else "missing", cfg.strong_model.model or "(not set)"))
+    checks.append(("fast_model.max_concurrency", "ok", str(cfg.fast_model.max_concurrency)))
+    checks.append(("strong_model.max_concurrency", "ok", str(cfg.strong_model.max_concurrency)))
+    checks.append(("output.format", "ok", _display_output_format(cfg.output.format)))
 
-    pipeline.run(
-        project=project,
-        session_id=session_id,
-        since=since_ts,
-        step=step,
-        dry_run=dry_run,
-    )
+    try:
+        create_source(cfg.source)
+        checks.append(("source.adapter", "ok", "source adapter created successfully"))
+    except Exception as exc:
+        checks.append(("source.adapter", "error", str(exc)))
+
+    table = Table(title="Trace2Skill Doctor")
+    table.add_column("Check", style="cyan")
+    table.add_column("Status", width=10)
+    table.add_column("Details")
+
+    has_error = False
+    for name, status, details in checks:
+        color = {
+            "ok": "green",
+            "missing": "red",
+            "error": "red",
+            "auto": "yellow",
+        }.get(status, "white")
+        if status in {"missing", "error"}:
+            has_error = True
+        table.add_row(name, f"[{color}]{status}[/]", details)
+
+    console.print(table)
+    if has_error:
+        console.print("\n[red]Doctor found blocking issues. Fix configuration before running `trace2skill run`.[/]")
+    else:
+        console.print("\n[green]Doctor checks passed.[/]")
 
 
-# ── sessions ──
+@cli.group()
+def config():
+    """查看和管理当前运行配置。"""
 
-@cli.command()
-@click.option("--project", "-p", help="按项目名称过滤（子串匹配）")
-@click.option("--top", type=int, default=20, help="最多显示 N 个会话（默认 20）")
-@click.option("--all", "show_all", is_flag=True, help="显示全部会话（不过滤低质量）")
-def sessions(project: str | None, top: int, show_all: bool):
-    """列出可用会话（纯元数据，不调用 LLM）。
 
-    从数据源读取会话列表，显示 id、标题、项目、消息数、
-    工具调用数等基本信息。可按项目过滤。
+@config.command("show")
+def config_show():
+    """显示当前有效配置（API Key 脱敏）。"""
+    cfg = _load_config()
+    console.print(_format_llm_panel("Fast Model", cfg.fast_model))
+    console.print()
+    console.print(_format_llm_panel("Strong Model", cfg.strong_model))
+    console.print()
+    console.print(Panel(
+        f"type: {cfg.source.type}\n"
+        f"location: {_current_source_location(cfg)}",
+        title="Current Source",
+    ))
+    console.print()
+    console.print(Panel(
+        f"output.format: {_display_output_format(cfg.output.format)}\n"
+        f"output.skill_output_dir: {cfg.output.skill_output_dir}\n"
+        f"filter.min_messages: {cfg.filter.min_messages}\n"
+        f"filter.min_tools: {cfg.filter.min_tools}\n"
+        f"analysis.clustering_max_topics: {cfg.analysis.clustering_max_topics}",
+        title="Runtime Settings",
+    ))
 
-    \b
-    示例:
-      $ trace2skill sessions                     # 默认显示 top 20
-      $ trace2skill sessions -p my-project       # 按项目过滤
-      $ trace2skill sessions --top 5             # 只看最活跃的 5 个
-      $ trace2skill sessions --all               # 包含低质量会话
-    """
-    config = _load_config()
-    source = create_source(config.source)
 
-    sessions_meta = source.list_sessions(project=project)
-    if not sessions_meta:
-        console.print("[yellow]No sessions found.[/]")
+@config.command("set")
+@click.argument("key")
+@click.argument("value")
+def config_set(key: str, value: str):
+    """设置单个配置项。"""
+    try:
+        normalized = _resolve_output_format(value.lower()) if key == "output.format" else value
+        set_config_value(key, normalized)
+        shown = _display_output_format(normalized) if key == "output.format" else normalized
+        console.print(f"[green]Set {key} = {shown}[/]")
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+
+
+@config.command("edit")
+def config_edit():
+    """用默认编辑器打开 config.yaml。"""
+    config_path = DistillConfig.default_config_path()
+    if not config_path.exists():
+        console.print("[red]No config file found. Run 'trace2skill init' first.[/]")
         return
 
-    # Sort by msg_count desc, take top N first (before counting tools)
-    sessions_meta.sort(key=lambda s: s.msg_count, reverse=True)
-    total = len(sessions_meta)
-    sessions_meta = sessions_meta[:top]
+    editor = (
+        os.environ.get("VISUAL")
+        or os.environ.get("EDITOR")
+        or ("notepad" if platform.system() == "Windows" else "vi")
+    )
+    console.print(f"Opening {config_path} with {editor}...")
+    try:
+        subprocess.call([editor, str(config_path)])
+    except FileNotFoundError:
+        console.print(f"[red]Editor '{editor}' not found. Set VISUAL or EDITOR env var.[/]")
+    except OSError as exc:
+        console.print(f"[red]Failed to open editor: {exc}[/]")
 
-    # Count tools only for displayed sessions
+
+@cli.group()
+def sessions():
+    """查看当前 source 下的会话。"""
+
+
+@sessions.command("list")
+@click.option("--project", "-p", help="按项目名称过滤（子串匹配）")
+@click.option("--limit", type=int, default=20, show_default=True, help="最多显示 N 个会话")
+@click.option("--include-low-quality", is_flag=True, help="包含未通过质量阈值的会话")
+def sessions_list(project: str | None, limit: int, include_low_quality: bool):
+    """列出当前 source 下的会话元数据。"""
+    cfg = _load_config()
+    source = create_source(cfg.source)
+    sessions_meta = source.list_sessions(project=project)
+    if not sessions_meta:
+        console.print("[yellow]No sessions found in the current source.[/]")
+        return
+
     for s in sessions_meta:
         s.tool_count = source.count_tools(s.id)
 
-    # Filter by quality unless --all
-    if not show_all:
-        sessions_meta = [
+    filtered = sessions_meta
+    if not include_low_quality:
+        filtered = [
             s for s in sessions_meta
-            if s.msg_count >= config.filter.min_messages
-            and s.tool_count >= config.filter.min_tools
+            if s.msg_count >= cfg.filter.min_messages and s.tool_count >= cfg.filter.min_tools
         ]
 
-    if not sessions_meta:
-        console.print(f"[yellow]No sessions pass quality threshold "
-                      f"(min {config.filter.min_messages} msgs, "
-                      f"{config.filter.min_tools} tools). "
-                      f"Use --all to see all.[/]")
+    if not filtered:
+        console.print(
+            f"[yellow]No sessions pass quality threshold (min {cfg.filter.min_messages} msgs, "
+            f"{cfg.filter.min_tools} tools). Use --include-low-quality to inspect all.[/]"
+        )
         return
 
-    table = Table(title=f"Sessions ({len(sessions_meta)}/{total})")
+    filtered.sort(key=lambda s: (s.timestamp, s.msg_count, s.tool_count), reverse=True)
+    displayed = filtered[:limit]
+
+    table = Table(title=f"Sessions | source={cfg.source.type} | showing {len(displayed)}/{len(filtered)}")
     table.add_column("#", width=3, style="dim")
     table.add_column("Session ID", width=20)
     table.add_column("Title", width=40)
-    table.add_column("Project", width=15)
-    table.add_column("Msgs", width=5, justify="right")
-    table.add_column("Tools", width=5, justify="right")
+    table.add_column("Project", width=18)
+    table.add_column("Msgs", width=6, justify="right")
+    table.add_column("Tools", width=6, justify="right")
     table.add_column("Date", width=12)
 
-    for i, s in enumerate(sessions_meta):
-        date_str = (
-            datetime.fromtimestamp(s.timestamp).strftime("%Y-%m-%d")
-            if s.timestamp else ""
-        )
+    for i, s in enumerate(displayed, start=1):
         table.add_row(
-            str(i + 1),
+            str(i),
             s.id[:20],
             (s.title or "")[:40],
-            (s.project or "")[:15],
+            (s.project or "")[:18],
             str(s.msg_count),
             str(s.tool_count),
-            date_str,
+            _fmt_timestamp(s.timestamp),
         )
 
     console.print(table)
-    console.print(
-        "\n[dim]Use 'trace2skill distill -s <ID>' to distill a specific session.[/]"
-    )
+    console.print("\n[dim]Use 'trace2skill sessions show <ID>' or 'trace2skill inspect session <ID>' for details.[/]")
 
 
-# ── inspect ──
-
-@cli.command()
+@sessions.command("show")
 @click.argument("session_id")
-def inspect(session_id: str):
-    """查看单个会话的预处理结果。
+def sessions_show(session_id: str):
+    """查看单个会话的元信息。"""
+    cfg = _load_config()
+    source = create_source(cfg.source)
+    sessions_meta = source.list_sessions()
+    meta = next((s for s in sessions_meta if s.id == session_id), None)
 
-    对指定会话运行 L0→L1→L2 预处理流水线，展示生成的轨迹摘要:
-    类型、意图、阶段、遇到的问题及经验教训。
-    适用于调试过滤阈值。
+    if meta is None:
+        session = source.get_session(session_id)
+        if session is None:
+            console.print(f"[red]Session not found: {session_id}[/]")
+            return
+        tool_count = session.tool_count
+        msg_count = len(session.messages)
+        project = session.project_name
+        title = session.info.title
+        timestamp = session.info.time.get("created", 0) // 1000 if session.info.time.get("created") else 0
+    else:
+        tool_count = source.count_tools(session_id)
+        msg_count = meta.msg_count
+        project = meta.project
+        title = meta.title
+        timestamp = meta.timestamp
 
-    \b
-    示例:
-      $ trace2skill inspect abc123-def456
-    """
-    config = _load_config()
-    fast_provider = OpenAICompatibleProvider(config.fast_model)
+    passes = msg_count >= cfg.filter.min_messages and tool_count >= cfg.filter.min_tools
+    console.print(Panel(
+        f"Source: {cfg.source.type}\n"
+        f"Session ID: {session_id}\n"
+        f"Title: {title or '(untitled)'}\n"
+        f"Project: {project or '(unknown)'}\n"
+        f"Date: {_fmt_timestamp(timestamp) or '(unknown)'}\n"
+        f"Messages: {msg_count}\n"
+        f"Tools: {tool_count}\n"
+        f"Passes quality threshold: {'yes' if passes else 'no'}",
+        title="Session Details",
+    ))
+    console.print("[dim]Next: inspect preprocessing with `trace2skill inspect session <ID>` or run distillation with `trace2skill run --session <ID>`.[/]")
+
+
+@cli.group()
+def inspect():
+    """查看会话预处理结果或历史运行详情。"""
+
+
+@inspect.command("session")
+@click.argument("session_id")
+def inspect_session(session_id: str):
+    """查看单个会话的预处理结果。"""
+    cfg = _load_config()
+    fast_provider = OpenAICompatibleProvider(cfg.fast_model)
     fast_llm = LLMClient(fast_provider)
+    source = create_source(cfg.source)
 
-    source = create_source(config.source)
     from ..mining.preprocess.pipeline import run_pipeline
 
-    console.print(f"Inspecting session [cyan]{session_id}[/]...")
-
+    console.print(f"Inspecting session [cyan]{session_id}[/] from source [cyan]{cfg.source.type}[/]...")
     try:
-        result = run_pipeline(session_id, fast_llm, source, config)
-    except Exception as e:
-        console.print(f"[red]Error: {e}[/]")
+        result = run_pipeline(session_id, fast_llm, source, cfg)
+    except Exception as exc:
+        console.print(f"[red]Error: {exc}[/]")
         return
 
     if not result:
@@ -315,8 +461,8 @@ def inspect(session_id: str):
 
     if result.problems_encountered:
         console.print("\n[bold]Problems:[/]")
-        for p in result.problems_encountered:
-            console.print(f"  - {p.problem} → {p.how_resolved}")
+        for problem in result.problems_encountered:
+            console.print(f"  - {problem.problem} -> {problem.how_resolved}")
 
     if result.lessons_learned:
         console.print("\n[bold]Lessons:[/]")
@@ -325,244 +471,188 @@ def inspect(session_id: str):
 
     if result.discoveries:
         console.print("\n[bold]Discoveries:[/]")
-        for d in result.discoveries:
-            console.print(f"  - {d}")
+        for discovery in result.discoveries:
+            console.print(f"  - {discovery}")
 
-    # Print LLM stats
-    fast_stats = fast_llm.reset_stats()
-    console.print(f"\n[dim]Fast LLM: {fast_stats['calls']} calls, "
-                  f"{fast_stats['input_tokens']}+{fast_stats['output_tokens']} tokens[/]")
-
-
-# ── status ──
-
-@cli.command()
-def status():
-    """查看蒸馏状态和历史。
-
-    显示上次运行时间、已处理的会话数、累计消耗费用，
-    并列出所有已生成的 SKILL.md 文件。
-    """
-    state_file = Path.home() / ".trace2skill" / "state.json"
-    if state_file.exists():
-        state = json.loads(state_file.read_text(encoding="utf-8"))
-        console.print(Panel(
-            f"Last run: {state.get('last_run', 'never')}\n"
-            f"Sessions processed: {len(state.get('processed_sessions', []))}\n"
-            f"Cost accumulated: ¥{state.get('cost_accumulated', 0):.4f}",
-            title="Trace2Skill Status",
-        ))
-    else:
-        console.print("[yellow]No distillation history found.[/]")
-
-    # Show skill files
-    skill_dir = Path.home() / ".trace2skill" / "skills"
-    if skill_dir.exists():
-        skills = sorted(
-            list(skill_dir.rglob("SKILL.md")) + list(skill_dir.rglob("*_knowledge.md")),
-            key=lambda p: str(p),
-        )
-        if skills:
-            console.print(f"\n[bold]Skill files ({len(skills)}):[/]")
-            for s in skills:
-                size = s.stat().st_size
-                console.print(f"  {s.relative_to(skill_dir)} ({size} bytes)")
-
-
-# ── config ──
-
-@cli.group()
-def config():
-    """查看和管理配置。
-
-    \b
-    子命令:
-      show   显示当前有效配置（API Key 脱敏）
-      set    设置单个配置项（点分路径 key）
-      edit   用默认编辑器打开 config.yaml
-    """
-    pass
-
-
-def _mask(s: str | None, visible: int = 4) -> str:
-    """Mask a string, showing only the first `visible` chars."""
-    if not s:
-        return "(not set)"
-    if len(s) <= visible:
-        return "*" * len(s)
-    return s[:visible] + "*" * (len(s) - visible)
-
-
-def _format_llm_panel(label: str, cfg: LLMConfig) -> Panel:
-    """Build a Rich Panel for one LLMConfig."""
-    return Panel(
-        f"model: {cfg.model}\n"
-        f"max_tokens: {cfg.max_tokens}\n"
-        f"api_key: {_mask(cfg.api_key)}\n"
-        f"base_url: {cfg.base_url}\n"
-        f"verify_ssl: {cfg.verify_ssl}\n"
-        f"proxy: {cfg.proxy or '(none)'}\n"
-        f"proxy_bypass: {cfg.proxy_bypass or '(none)'}\n"
-        f"timeout: {cfg.timeout}\n"
-        f"connect_timeout: {cfg.connect_timeout}\n"
-        f"extra_headers: {cfg.extra_headers or '(none)'}\n"
-        f"user_agent: {cfg.user_agent}",
-        title=label,
+    stats = fast_llm.reset_stats()
+    console.print(
+        f"\n[dim]Fast LLM: {stats['calls']} calls, "
+        f"{stats['input_tokens']}+{stats['output_tokens']} tokens[/]"
     )
 
 
-@config.command("show")
-def config_show():
-    """显示当前有效配置（API Key 脱敏）。
+@inspect.command("run")
+@click.argument("run_id")
+def inspect_run(run_id: str):
+    """查看单次运行的报告摘要。"""
+    loaded = _load_report(run_id)
+    if not loaded:
+        console.print(f"[red]Run report not found: {run_id}[/]")
+        return
 
-    从 ~/.trace2skill/config.yaml 加载配置，展示 fast 和 strong
-    模型的全部字段。环境变量覆盖也会反映在输出中。
-    """
-    cfg = _load_config()
-    console.print(_format_llm_panel("Fast Model", cfg.fast_model))
-    console.print()
-    console.print(_format_llm_panel("Strong Model", cfg.strong_model))
-    console.print()
+    report_path, report = loaded
+    html_path = report_path.with_suffix(".html")
     console.print(Panel(
-        f"type: {cfg.source.type}\n"
-        f"opencode.db_path: {cfg.source.opencode.db_path}\n"
-        f"chrys.sessions_dir: {cfg.source.chrys.sessions_dir or '(auto-detect)'}",
-        title="Source",
+        f"Run ID: {report.run_id}\n"
+        f"Project: {report.project}\n"
+        f"Started: {report.started_at}\n"
+        f"Finished: {report.finished_at}\n"
+        f"Duration: {report.total_duration_seconds:.1f}s\n"
+        f"Sessions: {report.sessions_passed_filter}/{report.sessions_total}\n"
+        f"Topics: {report.topics_found}\n"
+        f"Rules: {report.total_rules}\n"
+        f"Output dir: {report.output_dir or '(none)'}\n"
+        f"JSON report: {report_path}\n"
+        f"HTML report: {html_path if html_path.exists() else '(missing)'}",
+        title="Run Report",
     ))
 
-
-@config.command("set")
-@click.argument("key")
-@click.argument("value")
-def config_set(key: str, value: str):
-    """设置单个配置项。
-
-    KEY 使用点分路径格式，如 fast.proxy、strong.timeout。
-    VALUE 为字符串值，会自动转换为正确的类型。
-
-    \b
-    示例:
-      $ trace2skill config set fast.proxy socks5://127.0.0.1:1080
-      $ trace2skill config set fast.proxy_bypass "localhost,127\\.0\\.0\\.1"
-      $ trace2skill config set strong.timeout 180
-      $ trace2skill config set fast.verify_ssl true
-    """
-    try:
-        set_config_value(key, value)
-        console.print(f"[green]Set {key} = {value}[/]")
-    except ValueError as e:
-        console.print(f"[red]{e}[/]")
+    if report.steps:
+        step_table = Table(title="Steps")
+        step_table.add_column("Step")
+        step_table.add_column("Duration", justify="right")
+        for step in report.steps:
+            step_table.add_row(step.name, f"{step.duration_seconds:.1f}s")
+        console.print(step_table)
 
 
-@config.command("edit")
-def config_edit():
-    """用默认编辑器打开 config.yaml。
+@cli.command()
+@click.option("--project", "-p", help="按项目名称过滤（只在当前 source 内解释）")
+@click.option("--session", "-s", "session_id", help="指定单个会话 ID")
+@click.option(
+    "--mode",
+    type=click.Choice(["preprocess", "analyze", "full"], case_sensitive=False),
+    default="full",
+    show_default=True,
+    help="执行到哪个阶段",
+)
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice(["skill", "knowledge"], case_sensitive=False),
+    default="skill",
+    show_default=True,
+    help="输出格式",
+)
+@click.option("--preview", is_flag=True, help="只预览，不写任何文件或状态")
+def run(
+    project: str | None,
+    session_id: str | None,
+    mode: str,
+    output_format: str,
+    preview: bool,
+):
+    """运行蒸馏流程，默认使用当前配置中的 source、模型和并发。"""
+    if project and session_id:
+        raise click.UsageError("`--project` and `--session` cannot be used together.")
 
-    使用 VISUAL 或 EDITOR 环境变量指定的编辑器。
-    若未设置则回退到 notepad (Windows) 或 vi (Unix)。
-    """
-    import subprocess
-    import platform
+    cfg = _load_config()
+    cfg.output.format = _resolve_output_format(output_format.lower())
 
-    config_path = DistillConfig.default_config_path()
-    if not config_path.exists():
-        console.print("[red]No config file found. Run 'trace2skill init' first.[/]")
-        return
+    console.print(Panel(
+        f"Source: {cfg.source.type}\n"
+        f"Project: {project or '(all in current source)'}\n"
+        f"Session: {session_id or '(none)'}\n"
+        f"Mode: {mode}\n"
+        f"Preview: {preview}\n"
+        f"Fast max_concurrency: {cfg.fast_model.max_concurrency}\n"
+        f"Strong max_concurrency: {cfg.strong_model.max_concurrency}\n"
+        f"Output: {_display_output_format(cfg.output.format)}",
+        title="Run Settings",
+    ))
 
-    editor = (
-        os.environ.get("VISUAL")
-        or os.environ.get("EDITOR")
-        or ("notepad" if platform.system() == "Windows" else "vi")
+    pipeline = DistillPipeline.from_config(cfg)
+    pipeline.run(
+        project=project,
+        session_id=session_id,
+        mode=mode.lower(),
+        preview=preview,
     )
-    console.print(f"Opening {config_path} with {editor}...")
-    try:
-        subprocess.call([editor, str(config_path)])
-    except FileNotFoundError:
-        console.print(f"[red]Editor '{editor}' not found. Set VISUAL or EDITOR env var.[/]")
-    except OSError as e:
-        console.print(f"[red]Failed to open editor: {e}[/]")
 
-
-# ── schedule ──
 
 @cli.group()
-def schedule():
-    """管理定时蒸馏任务。
-
-    \b
-    子命令:
-      start   启动调度守护进程（前台运行）
-      status  查看调度器配置和状态
-    """
-    pass
+def runs():
+    """查看历史运行结果。"""
 
 
-@schedule.command("start")
-def schedule_start():
-    """启动定时蒸馏守护进程。
-
-    在前台运行，按照 config.yaml 中 scheduler.cron 定义的时间触发蒸馏。
-    需要先在配置中设置 scheduler.enabled=true。
-    按 Ctrl+C 停止。
-    """
-    import schedule as sched_mod
-
-    config = _load_config()
-    if not config.scheduler.enabled:
-        console.print("[yellow]Scheduler is not enabled in config. Set scheduler.enabled = true[/]")
+@runs.command("list")
+def runs_list():
+    """列出已有运行历史。"""
+    reports = _iter_reports()
+    if not reports:
+        console.print("[yellow]No run reports found.[/]")
         return
 
-    cron = config.scheduler.cron
-    console.print(f"Starting scheduler with cron: {cron}")
-    console.print("[dim]Press Ctrl+C to stop[/]")
+    table = Table(title="Run History")
+    table.add_column("Run ID", width=10)
+    table.add_column("Project", width=16)
+    table.add_column("Started", width=20)
+    table.add_column("Sessions", width=10, justify="right")
+    table.add_column("Topics", width=8, justify="right")
+    table.add_column("Rules", width=8, justify="right")
+    table.add_column("Duration", width=10, justify="right")
 
-    parts = cron.split()
-    if len(parts) >= 2:
-        minute, hour = parts[0], parts[1]
-        time_str = f"{hour}:{minute}"
-        sched_mod.every().day.at(time_str).do(_scheduled_run)
+    for _, report in reports:
+        table.add_row(
+            report.run_id,
+            (report.project or "")[:16],
+            report.started_at[:19],
+            f"{report.sessions_passed_filter}/{report.sessions_total}",
+            str(report.topics_found),
+            str(report.total_rules),
+            f"{report.total_duration_seconds:.1f}s",
+        )
 
-    try:
-        while True:
-            sched_mod.run_pending()
-            time.sleep(60)
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Scheduler stopped.[/]")
-
-
-@schedule.command("status")
-def schedule_status():
-    """查看调度器配置及启用状态。
-
-    从 config.yaml 读取调度器设置: 是否启用、cron 表达式、增量策略。
-    """
-    config = _load_config()
-    if config.scheduler.enabled:
-        console.print(f"Scheduler: [green]enabled[/]")
-        console.print(f"Cron: {config.scheduler.cron}")
-        console.print(f"Strategy: {config.scheduler.strategy}")
-    else:
-        console.print("Scheduler: [yellow]disabled[/]")
+    console.print(table)
 
 
-# ── Helpers ──
+@runs.command("show")
+@click.argument("run_id")
+def runs_show(run_id: str):
+    """查看单次运行的详细信息。"""
+    loaded = _load_report(run_id)
+    if not loaded:
+        console.print(f"[red]Run report not found: {run_id}[/]")
+        return
 
-def _scheduled_run():
-    """Callback for scheduled runs."""
-    config = _load_config()
-    pipeline = DistillPipeline.from_config(config)
+    report_path, report = loaded
+    html_path = report_path.with_suffix(".html")
 
-    now = datetime.now().isoformat()
-    console.print(f"[{now}] Scheduled distillation starting...")
+    console.print(Panel(
+        f"Run ID: {report.run_id}\n"
+        f"Project: {report.project}\n"
+        f"Started: {report.started_at}\n"
+        f"Finished: {report.finished_at}\n"
+        f"Output dir: {report.output_dir or '(none)'}\n"
+        f"JSON report: {report_path}\n"
+        f"HTML report: {html_path if html_path.exists() else '(missing)'}",
+        title="Run Details",
+    ))
 
-    from ..output.state import StateManager
-    state_mgr = StateManager()
-    since_ts = state_mgr.get_last_run_ts()
+    summary = Table(title="Summary")
+    summary.add_column("Metric")
+    summary.add_column("Value", justify="right")
+    summary.add_row("Sessions total", str(report.sessions_total))
+    summary.add_row("Sessions passed", str(report.sessions_passed_filter))
+    summary.add_row("Topics", str(report.topics_found))
+    summary.add_row("Rules", str(report.total_rules))
+    summary.add_row("Duration", f"{report.total_duration_seconds:.1f}s")
+    console.print(summary)
 
-    pipeline.run(
-        project=None,
-        since=since_ts,
-    )
+    if report.llm_usage:
+        llm_table = Table(title="LLM Usage")
+        llm_table.add_column("Model")
+        llm_table.add_column("Calls", justify="right")
+        llm_table.add_column("Input", justify="right")
+        llm_table.add_column("Output", justify="right")
+        for usage in report.llm_usage:
+            llm_table.add_row(
+                usage.label,
+                str(usage.calls),
+                str(usage.input_tokens),
+                str(usage.output_tokens),
+            )
+        console.print(llm_table)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from trace2skill_distiller.core.config import DistillConfig, LLMConfig, ConcurrencyConfig
+from trace2skill_distiller.core.config import DistillConfig, LLMConfig
 from trace2skill_distiller.llm.client import LLMClient
 from trace2skill_distiller.llm.types import LLMResponse, LLMUsageStats
 from trace2skill_distiller.mining.preprocess.pipeline import run_batch
@@ -87,33 +87,11 @@ class FakeSource:
 
 # ── Tests ──
 
-class TestConcurrencyConfig:
-    def test_default_workers(self):
-        cfg = ConcurrencyConfig()
-        assert cfg.workers == 1
-
-    def test_distill_config_includes_concurrency(self):
+class TestModelConcurrencyDefaults:
+    def test_distill_config_uses_model_level_concurrency(self):
         cfg = DistillConfig()
-        assert cfg.concurrency.workers == 1
-
-    def test_load_from_yaml(self, tmp_path):
-        import yaml
-        config_path = tmp_path / "config.yaml"
-        config_path.write_text(yaml.dump({
-            "models": {"fast": {}, "strong": {}},
-            "concurrency": {"workers": 5},
-        }))
-        cfg = DistillConfig.load(config_path)
-        assert cfg.concurrency.workers == 5
-
-    def test_workers_default_on_missing(self, tmp_path):
-        import yaml
-        config_path = tmp_path / "config.yaml"
-        config_path.write_text(yaml.dump({
-            "models": {"fast": {}, "strong": {}},
-        }))
-        cfg = DistillConfig.load(config_path)
-        assert cfg.concurrency.workers == 1
+        assert cfg.fast_model.max_concurrency == 1
+        assert cfg.strong_model.max_concurrency == 1
 
 
 class TestLLMClientThreadSafety:
@@ -199,9 +177,9 @@ class TestConcurrencyCap:
     """Test semaphore-based concurrency cap in LLMClient."""
 
     def test_max_concurrency_defaults_to_zero(self):
-        """LLMConfig defaults max_concurrency to 0 (unlimited)."""
+        """LLMConfig defaults max_concurrency to 1."""
         cfg = LLMConfig()
-        assert cfg.max_concurrency == 0
+        assert cfg.max_concurrency == 1
 
     def test_semaphore_limits_concurrent_calls(self):
         """With max_concurrency=2, only 2 calls run simultaneously."""
@@ -250,28 +228,26 @@ class TestConcurrencyCap:
         assert client._semaphore is None
 
     def test_mining_workers_capped_by_max_concurrency(self):
-        """DefaultMiningLayer caps workers by fast_model.max_concurrency."""
+        """DefaultMiningLayer uses fast_model.max_concurrency as worker count."""
         from trace2skill_distiller.mining.mining_facade import DefaultMiningLayer
 
         config = DistillConfig(
             fast_model=LLMConfig(max_concurrency=2, api_key="test"),
-            concurrency=ConcurrencyConfig(workers=5),
         )
         mining = DefaultMiningLayer(FakeSource(), MagicMock(), config)
-        assert mining._max_workers == 2, "Workers should be capped to max_concurrency"
+        assert mining._max_workers == 2, "Workers should follow fast_model.max_concurrency"
 
     def test_pipeline_analysis_workers_capped(self):
-        """Pipeline caps analysis workers by strong_model.max_concurrency."""
+        """Pipeline uses strong_model.max_concurrency for analysis workers."""
         from trace2skill_distiller.orchestrator.pipeline import DistillPipeline
 
         config = DistillConfig(
             fast_model=LLMConfig(max_concurrency=2, api_key="test"),
             strong_model=LLMConfig(max_concurrency=1, api_key="test"),
-            concurrency=ConcurrencyConfig(workers=4),
         )
         pipeline = DistillPipeline.from_config(config)
         assert pipeline._analysis._max_workers == 1, (
-            "Analysis workers should be capped to strong_model.max_concurrency"
+            "Analysis workers should follow strong_model.max_concurrency"
         )
 
 
