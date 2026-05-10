@@ -102,6 +102,9 @@ def _extract_blocks(
 
     # Parallel block extraction with progress tracking
     say(f"[{tag}] L1b extracting {len(blocks)} blocks with {max_workers} workers...")
+    for i, block in enumerate(blocks):
+        say(f"[{tag}] L1b block {i+1}: {block.intent[:50]}")
+
     summaries: list = [None] * len(blocks)
     completed = 0
 
