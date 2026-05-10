@@ -100,22 +100,27 @@ def _extract_blocks(
             summaries.append(summary)
         return summaries
 
-    # Parallel block extraction
-    say(f"[{tag}] L1b extracting {len(blocks)} blocks (parallel)...")
+    # Parallel block extraction with progress tracking
+    say(f"[{tag}] L1b extracting {len(blocks)} blocks with {max_workers} workers...")
     summaries: list = [None] * len(blocks)
+    completed = 0
+
     with ThreadPoolExecutor(max_workers=min(max_workers, len(blocks))) as pool:
         futures = {}
         for i, block in enumerate(blocks):
             future = pool.submit(extract_block_summary, cleaned, block, fast_llm)
-            futures[future] = i
+            futures[future] = (i, block.intent[:50])
 
         for future in as_completed(futures):
-            idx = futures[future]
+            idx, intent_preview = futures[future]
+            completed += 1
             try:
                 summaries[idx] = future.result()
+                say(f"[{tag}] L1b block {idx+1} done ({completed}/{len(blocks)})")
             except Exception as e:
                 logger.warning("Block %d failed: %s", idx, e)
                 summaries[idx] = None
+                say(f"[{tag}] L1b block {idx+1} failed ({completed}/{len(blocks)})")
 
     return [s for s in summaries if s is not None]
 
