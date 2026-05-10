@@ -2,7 +2,7 @@
 
 **从 AI 编程会话中自动提炼可复用的技能知识。**
 
-分析你的 AI 编程会话记录（支持 [OpenCode](https://github.com/opencode-ai/opencode) 和 [Chrys](https://github.com/inference-gateway/chrys)），用 LLM 提取可操作的实践经验和技能规则，写入 `SKILL.md` 供 AI 编程助手自动发现和复用。
+分析你的 AI 编程会话记录（支持 [OpenCode](https://github.com/opencode-ai/opencode) 和 Chrys），用 LLM 提取可操作的实践经验和技能规则，写入 `SKILL.md` 供 AI 编程助手自动发现和复用。
 
 ## 设计理念
 
