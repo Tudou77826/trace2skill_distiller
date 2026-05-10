@@ -79,10 +79,7 @@ class DistillPipeline:
         )
         run_start = time.monotonic()
 
-        console.print(Panel(
-            f"[bold]Trace2Skill Distiller v0.1[/]",
-            subtitle=f"Project: {project or 'all'} | Run: {run_id}",
-        ))
+        console.print(f"\n[bold]Trace2Skill Distiller[/] [dim]run:{run_id}[/]")
 
         # ── Step 0: List sessions ──
         if session_id:
@@ -117,31 +114,36 @@ class DistillPipeline:
         report.sessions_total = len(sessions_meta)
 
         # ── Filter candidates ──
-        table = Table(title="Session Candidates")
-        table.add_column("#", width=3)
-        table.add_column("Session ID")
-        table.add_column("Title", width=40)
-        table.add_column("Msgs", width=5)
-        table.add_column("Tools", width=5)
-
         candidates = self._mining.filter_candidates(
             sessions_meta,
             min_messages=self._config.filter.min_messages,
             min_tools=self._config.filter.min_tools,
         )
 
-        for i, s in enumerate(candidates):
-            table.add_row(
-                str(i + 1),
-                s.id,
-                (s.title or "")[:40],
-                str(s.msg_count),
-                str(s.tool_count),
-            )
+        # Show candidate table only when there are multiple sessions
+        if len(sessions_meta) > 1:
+            table = Table(title="Session Candidates")
+            table.add_column("#", width=3)
+            table.add_column("Session ID")
+            table.add_column("Title", width=40)
+            table.add_column("Msgs", width=5)
+            table.add_column("Tools", width=5)
 
-        console.print(table)
-        console.print(f"\n[green]{len(candidates)}[/] sessions pass quality threshold "
-                      f"(out of {len(sessions_meta)} total)")
+            for i, s in enumerate(candidates):
+                table.add_row(
+                    str(i + 1),
+                    s.id,
+                    (s.title or "")[:40],
+                    str(s.msg_count),
+                    str(s.tool_count),
+                )
+
+            console.print(table)
+            console.print(f"\n[green]{len(candidates)}[/] sessions pass quality threshold "
+                          f"(out of {len(sessions_meta)} total)")
+        elif candidates:
+            console.print(f"  Session: {candidates[0].id}  "
+                          f"({candidates[0].msg_count} msgs, {candidates[0].tool_count} tools)")
 
         report.sessions_passed_filter = len(candidates)
 
@@ -158,16 +160,12 @@ class DistillPipeline:
         step_start = time.monotonic()
         trajectories = self._mining.mine([s.id for s in candidates])
         step_elapsed = time.monotonic() - step_start
-        cumulative = time.monotonic() - run_start
         report.steps.append(StepTiming(
             name="Preprocessing (L0→L1→L2)",
             start=datetime.now().isoformat(),
             duration_seconds=step_elapsed,
         ))
-        console.print(
-            f"  Step 1 done: {_fmt_dur(step_elapsed)} "
-            f"(cumulative: {_fmt_dur(cumulative)})"
-        )
+        console.print(f"  Step 1 done: {_fmt_dur(step_elapsed)}")
 
         # Collect session entries for report
         for t in trajectories:
@@ -191,12 +189,15 @@ class DistillPipeline:
                 label_reason=reason,
             ))
 
-        console.print(
-            f"\nPreprocessing complete: "
-            f"T+={sum(1 for t in trajectories if t.label == 'success')} "
-            f"T±={sum(1 for t in trajectories if t.label == 'partial')} "
-            f"T-={sum(1 for t in trajectories if t.label == 'failure')}"
-        )
+        success_count = sum(1 for t in trajectories if t.label == "success")
+        partial_count = sum(1 for t in trajectories if t.label == "partial")
+        fail_count = sum(1 for t in trajectories if t.label == "failure")
+        label_parts = [f"{success_count} success"]
+        if partial_count:
+            label_parts.append(f"{partial_count} partial")
+        if fail_count:
+            label_parts.append(f"{fail_count} failure")
+        console.print(f"\nPreprocessing: {', '.join(label_parts)}")
 
         if not trajectories:
             console.print("[yellow]No trajectories passed preprocessing.[/]")
@@ -219,8 +220,8 @@ class DistillPipeline:
             )
             return report
 
-        # ── Step 1.5 + 2: Analysis (clustering + distillation) ──
-        console.print("\n[bold]Step 1.5: Clustering trajectories by topic...[/]")
+        # ── Step 2: Analysis (clustering + distillation) ──
+        console.print("\n[bold]Step 2: Clustering + Distillation...[/]")
         step_start = time.monotonic()
         output_dir = Path(self._config.output.skill_output_dir).expanduser()
 
@@ -231,7 +232,6 @@ class DistillPipeline:
         )
 
         step_elapsed = time.monotonic() - step_start
-        cumulative = time.monotonic() - run_start
         report.steps.append(StepTiming(
             name="Topic Clustering + Distillation",
             duration_seconds=step_elapsed,
@@ -243,10 +243,7 @@ class DistillPipeline:
                       f"({len(analysis_result.clustering.unclustered)} unclustered)")
         for c in analysis_result.clustering.clusters:
             console.print(f"    - {c.topic_name} ({len(c.session_ids)} sessions)")
-        console.print(
-            f"  Step 1.5+2 done: {_fmt_dur(step_elapsed)} "
-            f"(cumulative: {_fmt_dur(cumulative)})"
-        )
+        console.print(f"  Step 2 done: {_fmt_dur(step_elapsed)}")
 
         total_rules = sum(len(s.rules) for s in analysis_result.skills)
         report.total_rules = total_rules
@@ -312,18 +309,21 @@ class DistillPipeline:
             duration_seconds=time.monotonic() - step_start,
         ))
         console.print(
-            f"  Step 3 done: {_fmt_dur(time.monotonic() - step_start)} "
-            f"(total: {_fmt_dur(time.monotonic() - run_start)})"
+            f"  Step 3 done: {_fmt_dur(time.monotonic() - step_start)}"
         )
 
+        # Determine actual output path for display
+        if shaping.written_paths:
+            output_display = str(shaping.written_paths[0])
+        else:
+            output_display = str(output_dir / project_name)
+
         console.print(Panel(
-            f"Sessions analyzed: {len(trajectories)} "
-            f"(T+={sum(1 for t in trajectories if t.label == 'success')}, "
-            f"T-={sum(1 for t in trajectories if t.label != 'success')})\n"
+            f"Sessions analyzed: {len(trajectories)}\n"
             f"Topics discovered: {len(analysis_result.clustering.clusters)}\n"
             f"Skills written: {len(shaping.written_paths)}\n"
             f"Total rules: {total_rules}\n"
-            f"Output dir: {output_dir / project_name}/",
+            f"Output: {output_display}",
             title="Distillation Complete",
         ))
 

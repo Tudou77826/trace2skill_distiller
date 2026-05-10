@@ -106,8 +106,10 @@ class OpenAICompatibleProvider:
                     f"Input exceeds model context window. "
                     f"Estimated input tokens: {estimate_tokens(prompt_text)}"
                 )
+            raise ValueError(f"API 400 Bad Request: {body[:500]}")
 
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            raise ValueError(f"API {resp.status_code}: {resp.text[:500]}")
         data = resp.json()
 
         # Track usage

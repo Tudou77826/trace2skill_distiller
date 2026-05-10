@@ -558,14 +558,18 @@ def run(
     cfg = _load_config()
     cfg.output.format = _resolve_output_format(output_format.lower())
 
+    # Determine effective display values
+    if session_id:
+        project_display = "(from session)"
+    else:
+        project_display = project or "(all)"
+
     console.print(Panel(
         f"Source: {cfg.source.type}\n"
-        f"Project: {project or '(all in current source)'}\n"
+        f"Project: {project_display}\n"
         f"Session: {session_id or '(none)'}\n"
         f"Mode: {mode}\n"
         f"Preview: {preview}\n"
-        f"Fast max_concurrency: {cfg.fast_model.max_concurrency}\n"
-        f"Strong max_concurrency: {cfg.strong_model.max_concurrency}\n"
         f"Output: {_display_output_format(cfg.output.format)}",
         title="Run Settings",
     ))

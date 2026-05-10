@@ -39,6 +39,7 @@ def run_pipeline(
     config: DistillConfig | None = None,
     *,
     quiet: bool = False,
+    max_workers: int = 1,
 ) -> TrajectorySummary | None:
     """Run full Level 0 → 1 → 2 pipeline on a single session."""
     tag = _short(session_id)
@@ -65,14 +66,10 @@ def run_pipeline(
     blocks = detect_intent_boundaries(cleaned, fast_llm)
     say(f"[{tag}] L1a done {_fmt_dur(time.monotonic()-t1)}: {len(blocks)} blocks")
 
-    # ── L1b: Per-block extraction ──
-    block_summaries = []
-    for i, block in enumerate(blocks):
-        tb = time.monotonic()
-        say(f"[{tag}] L1b block {i+1}/{len(blocks)}: {block.intent[:50]}")
-        summary = extract_block_summary(cleaned, block, fast_llm)
-        block_summaries.append(summary)
-        say(f"[{tag}] L1b block {i+1} done {_fmt_dur(time.monotonic()-tb)}")
+    # ── L1b: Per-block extraction (parallel when >1 block and >1 worker) ──
+    t_l1b = time.monotonic()
+    block_summaries = _extract_blocks(cleaned, blocks, fast_llm, tag, say, max_workers)
+    say(f"[{tag}] L1b done {_fmt_dur(time.monotonic()-t_l1b)}: {len(block_summaries)} summaries")
 
     # ── L2: Aggregate ──
     t2 = time.monotonic()
@@ -83,6 +80,44 @@ def run_pipeline(
 
     say(f"[{tag}] total {_fmt_dur(time.monotonic()-t0)}")
     return trajectory
+
+
+def _extract_blocks(
+    cleaned: CleanedSession,
+    blocks: list,
+    fast_llm: LLMClient,
+    tag: str,
+    say,
+    max_workers: int,
+) -> list:
+    """Extract block summaries, parallelizing when beneficial."""
+    if len(blocks) <= 1 or max_workers <= 1:
+        # Sequential — better logging
+        summaries = []
+        for i, block in enumerate(blocks):
+            say(f"[{tag}] L1b block {i+1}/{len(blocks)}: {block.intent[:50]}")
+            summary = extract_block_summary(cleaned, block, fast_llm)
+            summaries.append(summary)
+        return summaries
+
+    # Parallel block extraction
+    say(f"[{tag}] L1b extracting {len(blocks)} blocks (parallel)...")
+    summaries: list = [None] * len(blocks)
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(blocks))) as pool:
+        futures = {}
+        for i, block in enumerate(blocks):
+            future = pool.submit(extract_block_summary, cleaned, block, fast_llm)
+            futures[future] = i
+
+        for future in as_completed(futures):
+            idx = futures[future]
+            try:
+                summaries[idx] = future.result()
+            except Exception as e:
+                logger.warning("Block %d failed: %s", idx, e)
+                summaries[idx] = None
+
+    return [s for s in summaries if s is not None]
 
 
 def run_batch(
@@ -96,26 +131,30 @@ def run_batch(
     """Run pipeline on multiple sessions, optionally in parallel."""
     results: list[TrajectorySummary] = []
     total = len(session_ids)
-    # Always use sequential if <= 1 session — gives better logs and no overhead
-    effective_workers = max_workers if total > 1 else 1
 
-    if effective_workers <= 1:
+    if total <= 1:
+        # Single session: enable block-level parallelism
         for idx, sid in enumerate(session_ids, 1):
             console.print(f"  [bold][{idx}/{total}][/] {sid}")
             try:
-                result = run_pipeline(sid, fast_llm, source, config, quiet=False)
+                result = run_pipeline(
+                    sid, fast_llm, source, config,
+                    quiet=False, max_workers=max_workers,
+                )
                 if result:
                     results.append(result)
             except Exception as e:
                 logger.warning("Session %s failed: %s", sid, e)
                 console.print(f"    [red]Failed: {e}[/]")
     else:
-        console.print(f"  Parallel preprocessing with {effective_workers} workers...")
-        with ThreadPoolExecutor(max_workers=effective_workers) as pool:
+        # Multiple sessions: session-level parallelism, block-level sequential
+        console.print(f"  Parallel preprocessing with {max_workers} workers...")
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {}
             for sid in session_ids:
                 future = pool.submit(
-                    run_pipeline, sid, fast_llm, source, config, quiet=True,
+                    run_pipeline, sid, fast_llm, source, config,
+                    quiet=True, max_workers=1,  # block-level serial to avoid overload
                 )
                 futures[future] = sid
 

@@ -163,6 +163,18 @@ class LLMDistillationStrategy:
         max_workers: int = 1,
     ) -> list[TopicSkill]:
         skills: list[TopicSkill] = []
+
+        # Simple path for single cluster — no progress bar overhead
+        if len(clusters) <= 1:
+            for cluster in clusters:
+                try:
+                    skill = self.distill_topic(trajectories, cluster)
+                    if skill and (skill.rules or skill.body):
+                        skills.append(skill)
+                except Exception as e:
+                    logger.warning("Topic %s failed: %s", cluster.topic_name, e)
+            return skills
+
         desc = f"Distilling [{max_workers}w]" if max_workers > 1 else "Distilling"
 
         with Progress(

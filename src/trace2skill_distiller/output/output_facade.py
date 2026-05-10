@@ -58,6 +58,7 @@ class DefaultOutputLayer:
 
         if fmt == "knowledge_md":
             index_path = write_knowledge(skills, output_dir, project)
+            written_paths.append(index_path)
             console.print(f"  Knowledge: {index_path}")
         else:
             for skill in skills:
