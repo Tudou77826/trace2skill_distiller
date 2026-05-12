@@ -117,6 +117,8 @@ def _detect_boundaries_segmented(
     while start < n_anchors:
         end = min(start + ANCHOR_SEGMENT_SIZE, n_anchors)
         segments.append((start, end))
+        if end == n_anchors:
+            break  # Reached the end, stop iterating
         start = end - SEGMENT_OVERLAP  # Overlap for boundary continuity
 
     # Process each segment independently
@@ -217,14 +219,15 @@ def _merge_segment_blocks(
     # Sort by start index
     sorted_blocks = sorted(blocks, key=lambda b: b.message_range[0])
 
-    # Merge overlapping ranges (tolerance of 3 for minor boundary differences)
+    # Merge overlapping ranges (only true overlaps, not adjacent blocks)
     merged: list[IntentBlock] = []
     for block in sorted_blocks:
         start, end = block.message_range
 
-        # Check if this block overlaps with the last merged block
-        if merged and start <= merged[-1].message_range[1] + 3:
-            # Extend the last block if this one goes further
+        # Check if this block truly overlaps with the last merged block
+        # (not just adjacent - adjacent blocks should be kept separate)
+        if merged and start <= merged[-1].message_range[1]:
+            # True overlap: extend the last block if this one goes further
             last = merged[-1]
             if end > last.message_range[1]:
                 merged[-1] = IntentBlock(
