@@ -668,5 +668,166 @@ def runs_show(run_id: str):
         console.print(llm_table)
 
 
+@cli.command()
+@click.option("--source", "-s", type=click.Choice(["opencode", "chrys"]), default="opencode", help="数据源")
+@click.option("--days", "-d", type=int, default=30, show_default=True, help="统计最近 N 天")
+@click.option("--project", "-p", help="按项目名称过滤（子串匹配）")
+def usage(source: str, days: int, project: str | None):
+    """查看最近 N 天的 token 消耗统计。"""
+    import json
+    import sqlite3
+    from collections import defaultdict
+
+    cfg = _load_config()
+    source_type = source
+
+    # Calculate cutoff timestamp (milliseconds for OpenCode)
+    cutoff_ms = int(datetime.now().timestamp() * 1000) - days * 24 * 60 * 60 * 1000
+
+    stats_by_model: dict[str, dict] = defaultdict(lambda: {
+        "input": 0, "output": 0, "calls": 0,
+    })
+
+    if source_type == "opencode":
+        db_path = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
+        if not db_path.exists():
+            console.print(f"[red]OpenCode database not found: {db_path}[/]")
+            raise SystemExit(1)
+
+        conn = sqlite3.connect(str(db_path))
+        try:
+            # Query assistant messages with token data
+            query = """
+                SELECT m.data, s.directory
+                FROM message m
+                JOIN session s ON m.session_id = s.id
+                WHERE m.time_created > ?
+                  AND m.data LIKE '%"tokens":%'
+                  AND m.data LIKE '%"role":"assistant"%'
+            """
+            params = [cutoff_ms]
+            if project:
+                safe_project = project.replace("%", "\\%").replace("_", "\\_")
+                query += " AND s.directory LIKE ? ESCAPE '\\'"
+                params.append(f"%{safe_project}%")
+
+            rows = conn.execute(query, params).fetchall()
+        finally:
+            conn.close()
+
+        for row in rows:
+            data_json, directory = row
+            try:
+                data = json.loads(data_json)
+            except json.JSONDecodeError:
+                continue
+
+            tokens = data.get("tokens", {})
+            model_id = data.get("modelID", "unknown")
+
+            input_tokens = tokens.get("input", 0)
+            output_tokens = tokens.get("output", 0)
+
+            if input_tokens or output_tokens:
+                stats_by_model[model_id]["input"] += input_tokens
+                stats_by_model[model_id]["output"] += output_tokens
+                stats_by_model[model_id]["calls"] += 1
+
+    elif source_type == "chrys":
+        chrys_dir = Path(os.environ.get("APPDATA", "")) / "chrys" / "sessions"
+        if not chrys_dir.exists():
+            console.print(f"[red]Chrys sessions directory not found: {chrys_dir}[/]")
+            raise SystemExit(1)
+
+        cutoff_str = datetime.fromtimestamp(cutoff_ms / 1000).isoformat()
+
+        for session_dir in chrys_dir.iterdir():
+            if not session_dir.is_dir():
+                continue
+
+            session_file = session_dir / "session.json"
+            if not session_file.exists():
+                continue
+
+            try:
+                data = json.loads(session_file.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, IOError):
+                continue
+
+            # Check timestamp
+            meta = data.get("meta", {})
+            updated_at = meta.get("updated_at", "")
+            if updated_at and updated_at < cutoff_str:
+                continue
+
+            # Filter by project
+            cwd = meta.get("primary_cwd", "")
+            if project and project.lower() not in cwd.lower():
+                continue
+
+            # Extract usage
+            state = data.get("state", {})
+            last_usage = state.get("last_usage", {})
+            model_id = meta.get("model_id", "unknown")
+
+            input_tokens = last_usage.get("input_token_count", 0)
+            output_tokens = last_usage.get("output_token_count", 0)
+
+            if input_tokens or output_tokens:
+                stats_by_model[model_id]["input"] += input_tokens
+                stats_by_model[model_id]["output"] += output_tokens
+                stats_by_model[model_id]["calls"] += 1
+
+    if not stats_by_model:
+        console.print(f"[yellow]No token usage data found for the last {days} days.[/]")
+        return
+
+    # Format numbers
+    def fmt_tokens(n: int) -> str:
+        if n >= 1_000_000:
+            return f"{n / 1_000_000:.2f}M"
+        elif n >= 1_000:
+            return f"{n / 1_000:.1f}K"
+        return str(n)
+
+    # Calculate totals
+    total_input = sum(s["input"] for s in stats_by_model.values())
+    total_output = sum(s["output"] for s in stats_by_model.values())
+    total_calls = sum(s["calls"] for s in stats_by_model.values())
+
+    # Display summary
+    console.print(Panel(
+        f"Input:  {fmt_tokens(total_input)}\n"
+        f"Output: {fmt_tokens(total_output)}\n"
+        f"Total:  {fmt_tokens(total_input + total_output)}\n"
+        f"Calls:  {total_calls}",
+        title=f"Token Usage (last {days} days)",
+    ))
+
+    # Display by-model table
+    model_table = Table(title="By Model")
+    model_table.add_column("Model", width=24)
+    model_table.add_column("Input", justify="right", width=10)
+    model_table.add_column("Output", justify="right", width=10)
+    model_table.add_column("Total", justify="right", width=10)
+    model_table.add_column("Calls", justify="right", width=8)
+
+    for model_id, stats in sorted(
+        stats_by_model.items(),
+        key=lambda x: x[1]["input"] + x[1]["output"],
+        reverse=True
+    ):
+        total = stats["input"] + stats["output"]
+        model_table.add_row(
+            model_id[:24],
+            fmt_tokens(stats["input"]),
+            fmt_tokens(stats["output"]),
+            fmt_tokens(total),
+            str(stats["calls"]),
+        )
+
+    console.print(model_table)
+
+
 if __name__ == "__main__":
     cli()
