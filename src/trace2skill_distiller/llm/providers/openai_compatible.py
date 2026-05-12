@@ -58,15 +58,18 @@ class OpenAICompatibleProvider:
             )
             self._client = httpx.Client(
                 headers=headers, timeout=timeout, transport=transport,
+                trust_env=False,
             )
         elif config.proxy:
             self._client = httpx.Client(
                 headers=headers, timeout=timeout,
                 verify=config.verify_ssl, proxy=proxy_arg,
+                trust_env=False,
             )
         else:
             self._client = httpx.Client(
                 headers=headers, timeout=timeout, verify=config.verify_ssl,
+                trust_env=False,
             )
 
     @property

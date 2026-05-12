@@ -102,6 +102,12 @@ class OpenCodeSource:
         except json.JSONDecodeError as e:
             raise RuntimeError(f"Failed to parse export JSON: {e}")
 
+        # Fix OpenCode API format change: summary field may be bool instead of dict
+        for msg in data.get("messages", []):
+            info = msg.get("info", {})
+            if isinstance(info.get("summary"), bool):
+                info["summary"] = {}
+
         return Session.model_validate(data)
 
     def count_tools(self, session_id: str) -> int:

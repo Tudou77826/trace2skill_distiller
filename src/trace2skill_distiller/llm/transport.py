@@ -25,8 +25,8 @@ class ProxyBypassTransport(httpx.BaseTransport):
         bypass_patterns: str,
         verify: bool = False,
     ) -> None:
-        self._proxy_transport = httpx.HTTPTransport(proxy=proxy, verify=verify)
-        self._direct_transport = httpx.HTTPTransport(verify=verify)
+        self._proxy_transport = httpx.HTTPTransport(proxy=proxy, verify=verify, trust_env=False)
+        self._direct_transport = httpx.HTTPTransport(verify=verify, trust_env=False)
         bypass_list: list[re.Pattern[str]] = []
         for p in bypass_patterns.split(","):
             p = p.strip()
