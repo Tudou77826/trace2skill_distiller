@@ -58,7 +58,7 @@ def run_pipeline(
 
     say(f"[{tag}] L0 done {_fmt_dur(time.monotonic()-t0)}: "
         f"{cleaned.message_count} msgs, {cleaned.tool_count} tools, "
-        f"{len(cleaned.user_anchors)} anchors")
+        f"{len(cleaned.user_anchors)} user-turns")
 
     # ── L1a: Intent boundaries ──
     t1 = time.monotonic()

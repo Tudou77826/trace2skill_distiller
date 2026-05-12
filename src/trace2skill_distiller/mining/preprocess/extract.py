@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from ...llm import LLMClient
@@ -20,6 +21,10 @@ from .compress import format_anchors_for_llm, format_block_for_llm
 INPUT_TOKEN_BUDGET = 60000
 PROMPT_OVERHEAD = 500
 
+# Segment processing constants
+ANCHOR_SEGMENT_SIZE = 15  # Max user-turns per segment
+SEGMENT_OVERLAP = 3      # Overlap between adjacent segments
+
 
 # ── Level 1: Intent boundary detection ──
 
@@ -29,7 +34,7 @@ BOUNDARY_SYSTEM = """你是一个开发会话分析器。你的任务是识别�
 
 BOUNDARY_PROMPT = """分析以下开发会话中的用户输入序列，识别意图边界。
 
-用户输入列表（按时间排列）：
+User messages (chronological):
 {anchors}
 
 请将它们分组为独立的意图块（intent blocks）。
@@ -47,25 +52,43 @@ BOUNDARY_PROMPT = """分析以下开发会话中的用户输入序列，识别�
 }}
 
 注意：
-- message_range 使用消息在列表中的索引（从0开始）
+- message_range 使用消息在列表中的全局索引（从0开始，与输入中的索引一致）
 - 相邻的块可以连续，不应有间隙
-- 通常 1-3 个用户消息构成一个意图块"""
+- 根据实际意图变化来决定 blocks 数量，不要预设固定数量
+- 当用户消息超过20个时，至少应该分成6个以上的块"""
 
 
 def detect_intent_boundaries(
     cleaned: CleanedSession, llm: LLMClient
 ) -> list[IntentBlock]:
-    anchors_text = format_anchors_for_llm(cleaned)
+    """Detect intent boundaries, with segmented processing for long sessions."""
+    anchors = cleaned.user_anchors
+    n_anchors = len(anchors)
 
-    if len(cleaned.user_anchors) <= 2:
-        end = cleaned.user_anchors[-1].index if cleaned.user_anchors else 0
+    if n_anchors <= 2:
+        # Very short session: single block
+        end = anchors[-1].index if anchors else 0
         return [
             IntentBlock(
                 block_id=1,
                 message_range=(0, end),
-                intent=cleaned.user_anchors[0].text[:100] if cleaned.user_anchors else "unknown",
+                intent=anchors[0].text[:100] if anchors else "unknown",
             )
         ]
+
+    if n_anchors <= ANCHOR_SEGMENT_SIZE:
+        # Short session: single LLM call
+        return _detect_boundaries_single(cleaned, llm)
+
+    # Long session: segmented processing
+    return _detect_boundaries_segmented(cleaned, llm)
+
+
+def _detect_boundaries_single(
+    cleaned: CleanedSession, llm: LLMClient
+) -> list[IntentBlock]:
+    """Single LLM call for short sessions."""
+    anchors_text = format_anchors_for_llm(cleaned)
 
     budget = INPUT_TOKEN_BUDGET - PROMPT_OVERHEAD - estimate_tokens(BOUNDARY_SYSTEM)
     anchors_text = truncate_to_token_budget(anchors_text, budget)
@@ -78,6 +101,66 @@ def detect_intent_boundaries(
         json_retries=1,
     )
 
+    return _parse_boundary_result(result, cleaned)
+
+
+def _detect_boundaries_segmented(
+    cleaned: CleanedSession, llm: LLMClient
+) -> list[IntentBlock]:
+    """Segmented processing for long sessions (>15 user-turns)."""
+    anchors = cleaned.user_anchors
+    n_anchors = len(anchors)
+
+    # Split into segments with overlap
+    segments = []
+    start = 0
+    while start < n_anchors:
+        end = min(start + ANCHOR_SEGMENT_SIZE, n_anchors)
+        segments.append((start, end))
+        start = end - SEGMENT_OVERLAP  # Overlap for boundary continuity
+
+    # Process each segment independently
+    all_blocks: list[IntentBlock] = []
+    for seg_start, seg_end in segments:
+        # Format segment anchors with global indices
+        segment_text = _format_segment_anchors(anchors, seg_start, seg_end)
+
+        result = llm.chat_json_with_retry(
+            BOUNDARY_SYSTEM,
+            BOUNDARY_PROMPT.format(anchors=segment_text),
+            temperature=0.2,
+            max_tokens=4096,
+            json_retries=1,
+        )
+
+        seg_blocks = _parse_segment_boundary_result(result, seg_start)
+        all_blocks.extend(seg_blocks)
+
+    # Merge overlapping blocks and deduplicate
+    merged_blocks = _merge_segment_blocks(all_blocks, n_anchors)
+
+    # Merge similar adjacent intents
+    final_blocks = _merge_similar_intents(merged_blocks)
+
+    return final_blocks
+
+
+def _format_segment_anchors(
+    anchors: list, seg_start: int, seg_end: int
+) -> str:
+    """Format segment anchors with global indices."""
+    lines = []
+    for i in range(seg_start, seg_end):
+        anchor = anchors[i]
+        # Use global index (i) instead of segment-local index
+        lines.append(f"[{i}] {anchor.text[:200]}")
+    return "\n".join(lines)
+
+
+def _parse_boundary_result(
+    result: dict, cleaned: CleanedSession
+) -> list[IntentBlock]:
+    """Parse LLM output for single-segment boundary detection."""
     raw_blocks = result.get("blocks", [])
     if not raw_blocks or result.get("_parse_error"):
         end = cleaned.user_anchors[-1].index if cleaned.user_anchors else 0
@@ -100,6 +183,152 @@ def detect_intent_boundaries(
             )
         )
     return blocks
+
+
+def _parse_segment_boundary_result(
+    result: dict, seg_start: int
+) -> list[IntentBlock]:
+    """Parse LLM output for segment boundary detection."""
+    raw_blocks = result.get("blocks", [])
+    if not raw_blocks or result.get("_parse_error"):
+        return []
+
+    blocks = []
+    for b in raw_blocks:
+        rng = b.get("message_range", [0, 0])
+        # Indices are already global (from _format_segment_anchors)
+        blocks.append(
+            IntentBlock(
+                block_id=b.get("block_id", len(blocks) + 1),
+                message_range=(rng[0], rng[1]),
+                intent=b.get("intent", ""),
+            )
+        )
+    return blocks
+
+
+def _merge_segment_blocks(
+    blocks: list[IntentBlock], total_anchors: int
+) -> list[IntentBlock]:
+    """Merge overlapping blocks from different segments, deduplicate."""
+    if not blocks:
+        return []
+
+    # Sort by start index
+    sorted_blocks = sorted(blocks, key=lambda b: b.message_range[0])
+
+    # Merge overlapping ranges (tolerance of 3 for minor boundary differences)
+    merged: list[IntentBlock] = []
+    for block in sorted_blocks:
+        start, end = block.message_range
+
+        # Check if this block overlaps with the last merged block
+        if merged and start <= merged[-1].message_range[1] + 3:
+            # Extend the last block if this one goes further
+            last = merged[-1]
+            if end > last.message_range[1]:
+                merged[-1] = IntentBlock(
+                    block_id=last.block_id,
+                    message_range=(last.message_range[0], end),
+                    intent=last.intent,  # Keep first intent
+                )
+        else:
+            # No overlap, add as new block
+            block_id = len(merged) + 1
+            merged.append(
+                IntentBlock(
+                    block_id=block_id,
+                    message_range=(start, end),
+                    intent=block.intent,
+                )
+            )
+
+    # Ensure full coverage with no gaps
+    if merged:
+        # Fill gaps between blocks
+        filled: list[IntentBlock] = []
+        prev_end = 0
+        for block in merged:
+            if block.message_range[0] > prev_end + 1:
+                # Gap detected, fill it
+                filled.append(
+                    IntentBlock(
+                        block_id=len(filled) + 1,
+                        message_range=(prev_end, block.message_range[0]),
+                        intent="(过渡段)",
+                    )
+                )
+            filled.append(
+                IntentBlock(
+                    block_id=len(filled) + 1,
+                    message_range=block.message_range,
+                    intent=block.intent,
+                )
+            )
+            prev_end = block.message_range[1]
+
+        # Ensure last block covers to the end
+        if filled and filled[-1].message_range[1] < total_anchors - 1:
+            filled[-1] = IntentBlock(
+                block_id=filled[-1].block_id,
+                message_range=(filled[-1].message_range[0], total_anchors - 1),
+                intent=filled[-1].intent,
+            )
+
+        merged = filled
+
+    return merged
+
+
+def _merge_similar_intents(blocks: list[IntentBlock]) -> list[IntentBlock]:
+    """Merge adjacent blocks with similar intents."""
+    if len(blocks) <= 1:
+        return blocks
+
+    merged: list[IntentBlock] = []
+    for block in blocks:
+        if not merged:
+            merged.append(block)
+            continue
+
+        last = merged[-1]
+        if _intents_are_similar(last.intent, block.intent):
+            # Merge into one block
+            merged[-1] = IntentBlock(
+                block_id=last.block_id,
+                message_range=(last.message_range[0], block.message_range[1]),
+                intent=last.intent,  # Keep first intent
+            )
+        else:
+            merged.append(
+                IntentBlock(
+                    block_id=len(merged) + 1,
+                    message_range=block.message_range,
+                    intent=block.intent,
+                )
+            )
+
+    return merged
+
+
+def _intents_are_similar(intent1: str, intent2: str) -> bool:
+    """Check if two intents are similar based on keyword overlap."""
+    # Extract keywords (Chinese + English words)
+    words1 = set(re.findall(r"[a-zA-Z]+|[\u4e00-\u9fff]+", intent1.lower()))
+    words2 = set(re.findall(r"[a-zA-Z]+|[\u4e00-\u9fff]+", intent2.lower()))
+
+    # Filter out common filler words
+    filler = {"的", "和", "与", "在", "是", "有", "这", "那", "the", "a", "an", "is", "are"}
+    words1 = words1 - filler
+    words2 = words2 - filler
+
+    if not words1 or not words2:
+        return False
+
+    # 50% keyword overlap threshold
+    overlap = len(words1 & words2)
+    max_len = max(len(words1), len(words2))
+    return overlap / max_len >= 0.5
 
 
 # ── Level 1b: Per-block structured extraction ──
