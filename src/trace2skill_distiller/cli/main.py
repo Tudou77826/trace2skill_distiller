@@ -81,6 +81,8 @@ def _current_source_location(cfg: DistillConfig) -> str:
         return cfg.source.chrys.sessions_dir or "(auto-detect)"
     elif cfg.source.type == "codeagent":
         return cfg.source.codeagent.db_path
+    elif cfg.source.type == "claudecode":
+        return cfg.source.claudecode.projects_dir
     return cfg.source.opencode.db_path
 
 
@@ -164,7 +166,7 @@ def cli(verbose: bool):
 @click.option(
     "--source",
     "-s",
-    type=click.Choice(["opencode", "chrys", "codeagent"], case_sensitive=False),
+    type=click.Choice(["opencode", "chrys", "codeagent", "claudecode"], case_sensitive=False),
     prompt="数据源类型",
     default="opencode",
     help="选择数据源",
@@ -696,7 +698,7 @@ def runs_show(run_id: str):
 
 
 @cli.command()
-@click.option("--source", "-s", type=click.Choice(["opencode", "chrys", "codeagent"]), default="opencode", help="数据源")
+@click.option("--source", "-s", type=click.Choice(["opencode", "chrys", "codeagent", "claudecode"]), default="opencode", help="数据源")
 @click.option("--days", "-d", type=int, default=30, show_default=True, help="统计最近 N 天")
 @click.option("--project", "-p", help="按项目名称过滤（子串匹配）")
 def usage(source: str, days: int, project: str | None):
@@ -848,6 +850,56 @@ def usage(source: str, days: int, project: str | None):
                 stats_by_model[model_id]["input"] += input_tokens
                 stats_by_model[model_id]["output"] += output_tokens
                 stats_by_model[model_id]["calls"] += 1
+
+    elif source_type == "claudecode":
+        projects_dir = Path.home() / ".claude" / "projects"
+        if not projects_dir.exists():
+            console.print(f"[red]Claude Code projects directory not found: {projects_dir}[/]")
+            raise SystemExit(1)
+
+        cutoff_dt = datetime.fromtimestamp(cutoff_ms / 1000)
+
+        for project_dir in projects_dir.iterdir():
+            if not project_dir.is_dir():
+                continue
+
+            for jsonl_file in project_dir.glob("*.jsonl"):
+                try:
+                    with open(jsonl_file, encoding="utf-8") as f:
+                        for line in f:
+                            try:
+                                d = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+
+                            if d.get("type") != "assistant":
+                                continue
+
+                            # Check timestamp
+                            ts = d.get("timestamp", "")
+                            if ts:
+                                try:
+                                    if ts.endswith("Z"):
+                                        ts = ts[:-1] + "+00:00"
+                                    msg_dt = datetime.fromisoformat(ts)
+                                    if msg_dt < cutoff_dt:
+                                        continue
+                                except Exception:
+                                    pass
+
+                            msg = d.get("message", {})
+                            usage = msg.get("usage", {})
+                            model_id = msg.get("model", "unknown")
+
+                            input_tokens = usage.get("input_tokens", 0)
+                            output_tokens = usage.get("output_tokens", 0)
+
+                            if input_tokens or output_tokens:
+                                stats_by_model[model_id]["input"] += input_tokens
+                                stats_by_model[model_id]["output"] += output_tokens
+                                stats_by_model[model_id]["calls"] += 1
+                except IOError:
+                    continue
 
     if not stats_by_model:
         console.print(f"[yellow]No token usage data found for the last {days} days.[/]")

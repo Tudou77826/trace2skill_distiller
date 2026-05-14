@@ -64,12 +64,17 @@ class CodeAgentConfig(BaseModel):
     db_path: str = "~/.local/share/opencode/db/ngagent.db"
 
 
+class ClaudeCodeConfig(BaseModel):
+    projects_dir: str = "~/.claude/projects"
+
+
 class SourceConfig(BaseModel):
     """Data source configuration — selects which Coding Agent to mine from."""
-    type: str = "opencode"  # opencode | chrys | codeagent
+    type: str = "opencode"  # opencode | chrys | codeagent | claudecode
     opencode: OpenCodeConfig = Field(default_factory=OpenCodeConfig)
     chrys: ChrysConfig = Field(default_factory=ChrysConfig)
     codeagent: CodeAgentConfig = Field(default_factory=CodeAgentConfig)
+    claudecode: ClaudeCodeConfig = Field(default_factory=ClaudeCodeConfig)
 
 
 class DistillFilter(BaseModel):
@@ -195,6 +200,7 @@ class DistillConfig(BaseModel):
         src_opencode = OpenCodeConfig(**src_raw.get("opencode", {}))
         src_chrys = ChrysConfig(**src_raw.get("chrys", {}))
         src_codeagent = CodeAgentConfig(**src_raw.get("codeagent", {}))
+        src_claudecode = ClaudeCodeConfig(**src_raw.get("claudecode", {}))
 
         return cls(
             fast_model=fast_model,
@@ -204,6 +210,7 @@ class DistillConfig(BaseModel):
                 opencode=src_opencode,
                 chrys=src_chrys,
                 codeagent=src_codeagent,
+                claudecode=src_claudecode,
             ),
             filter=DistillFilter(**fl),
             scheduler=SchedulerConfig(**sched),
@@ -277,6 +284,11 @@ def init_default_config(
             "type": source_type,
             "chrys": {"sessions_dir": ""},
         }
+    elif source_type == "claudecode":
+        source_section = {
+            "type": source_type,
+            "claudecode": {"projects_dir": "~/.claude/projects"},
+        }
     else:
         source_section = {"type": source_type}
 
@@ -342,6 +354,7 @@ _CONFIG_KEY_MAP: dict[str, tuple[list[str], type]] = {
     "source.opencode.export_command": (["source", "opencode", "export_command"], str),
     "source.chrys.sessions_dir": (["source", "chrys", "sessions_dir"], str),
     "source.codeagent.db_path": (["source", "codeagent", "db_path"], str),
+    "source.claudecode.projects_dir": (["source", "claudecode", "projects_dir"], str),
     "filter.min_messages": (["filter", "min_messages"], int),
     "filter.min_tools": (["filter", "min_tools"], int),
     "analysis.clustering_max_topics": (["clustering_max_topics"], int),
