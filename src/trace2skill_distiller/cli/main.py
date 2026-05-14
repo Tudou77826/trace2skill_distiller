@@ -79,6 +79,8 @@ def _current_source_location(cfg: DistillConfig) -> str:
     """Return the active source location for display."""
     if cfg.source.type == "chrys":
         return cfg.source.chrys.sessions_dir or "(auto-detect)"
+    elif cfg.source.type == "codeagent":
+        return cfg.source.codeagent.db_path
     return cfg.source.opencode.db_path
 
 
@@ -669,7 +671,7 @@ def runs_show(run_id: str):
 
 
 @cli.command()
-@click.option("--source", "-s", type=click.Choice(["opencode", "chrys"]), default="opencode", help="数据源")
+@click.option("--source", "-s", type=click.Choice(["opencode", "chrys", "codeagent"]), default="opencode", help="数据源")
 @click.option("--days", "-d", type=int, default=30, show_default=True, help="统计最近 N 天")
 @click.option("--project", "-p", help="按项目名称过滤（子串匹配）")
 def usage(source: str, days: int, project: str | None):
@@ -772,6 +774,50 @@ def usage(source: str, days: int, project: str | None):
 
             input_tokens = last_usage.get("input_token_count", 0)
             output_tokens = last_usage.get("output_token_count", 0)
+
+            if input_tokens or output_tokens:
+                stats_by_model[model_id]["input"] += input_tokens
+                stats_by_model[model_id]["output"] += output_tokens
+                stats_by_model[model_id]["calls"] += 1
+
+    elif source_type == "codeagent":
+        db_path = Path.home() / ".local" / "share" / "opencode" / "db" / "ngagent.db"
+        if not db_path.exists():
+            console.print(f"[red]CodeAgent database not found: {db_path}[/]")
+            raise SystemExit(1)
+
+        conn = sqlite3.connect(str(db_path))
+        try:
+            query = """
+                SELECT m.data, s.directory
+                FROM message m
+                JOIN session s ON m.session_id = s.id
+                WHERE m.time_created > ?
+                  AND m.data LIKE '%"tokens":%'
+                  AND m.data LIKE '%"role":"assistant"%'
+            """
+            params = [cutoff_ms]
+            if project:
+                safe_project = project.replace("%", "\\%").replace("_", "\\_")
+                query += " AND s.directory LIKE ? ESCAPE '\\'"
+                params.append(f"%{safe_project}%")
+
+            rows = conn.execute(query, params).fetchall()
+        finally:
+            conn.close()
+
+        for row in rows:
+            data_json, directory = row
+            try:
+                data = json.loads(data_json)
+            except json.JSONDecodeError:
+                continue
+
+            tokens = data.get("tokens", {})
+            model_id = data.get("modelID", "unknown")
+
+            input_tokens = tokens.get("input", 0)
+            output_tokens = tokens.get("output", 0)
 
             if input_tokens or output_tokens:
                 stats_by_model[model_id]["input"] += input_tokens

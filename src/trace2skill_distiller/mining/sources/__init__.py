@@ -7,11 +7,12 @@ from typing import TYPE_CHECKING
 from .base import SessionSource
 from .opencode import OpenCodeSource
 from .chrys import ChrysSource
+from .codeagent import CodeAgentSource
 
 if TYPE_CHECKING:
     from ...core.config import SourceConfig
 
-__all__ = ["SessionSource", "OpenCodeSource", "ChrysSource", "create_source"]
+__all__ = ["SessionSource", "OpenCodeSource", "ChrysSource", "CodeAgentSource", "create_source"]
 
 
 def create_source(config: SourceConfig) -> SessionSource:
@@ -27,8 +28,12 @@ def create_source(config: SourceConfig) -> SessionSource:
             db_path=config.opencode.db_path,
             export_command=config.opencode.export_command,
         )
+    elif source_type == "codeagent":
+        return CodeAgentSource(
+            db_path=config.codeagent.db_path,
+        )
     else:
         raise ValueError(
             f"Unknown source type: '{source_type}'. "
-            f"Supported: opencode, chrys"
+            f"Supported: opencode, chrys, codeagent"
         )

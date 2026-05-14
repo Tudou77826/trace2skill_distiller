@@ -60,11 +60,16 @@ class ChrysConfig(BaseModel):
     sessions_dir: str = ""  # empty = auto-detect per platform
 
 
+class CodeAgentConfig(BaseModel):
+    db_path: str = "~/.local/share/opencode/db/ngagent.db"
+
+
 class SourceConfig(BaseModel):
     """Data source configuration — selects which Coding Agent to mine from."""
-    type: str = "opencode"  # opencode | chrys
+    type: str = "opencode"  # opencode | chrys | codeagent
     opencode: OpenCodeConfig = Field(default_factory=OpenCodeConfig)
     chrys: ChrysConfig = Field(default_factory=ChrysConfig)
+    codeagent: CodeAgentConfig = Field(default_factory=CodeAgentConfig)
 
 
 class DistillFilter(BaseModel):
@@ -80,11 +85,18 @@ class AnalysisConfig(BaseModel):
     protected_topics: list[str] = Field(default_factory=list)
 
 
+class DebugConfig(BaseModel):
+    """Debug output configuration."""
+    enabled: bool = False
+    output_dir: str = "~/.trace2skill/debug"
+
+
 class OutputConfig(BaseModel):
     """Configuration for the output layer."""
     skill_output_dir: str = "~/.trace2skill/skills"
     max_rules_per_skill: int = 15
     format: str = "skill_md"  # skill_md | knowledge_md
+    debug: DebugConfig = Field(default_factory=DebugConfig)
 
 
 class SchedulerConfig(BaseModel):
@@ -182,6 +194,7 @@ class DistillConfig(BaseModel):
         src_type = env_source_type or src_raw.get("type", "opencode")
         src_opencode = OpenCodeConfig(**src_raw.get("opencode", {}))
         src_chrys = ChrysConfig(**src_raw.get("chrys", {}))
+        src_codeagent = CodeAgentConfig(**src_raw.get("codeagent", {}))
 
         return cls(
             fast_model=fast_model,
@@ -190,6 +203,7 @@ class DistillConfig(BaseModel):
                 type=src_type,
                 opencode=src_opencode,
                 chrys=src_chrys,
+                codeagent=src_codeagent,
             ),
             filter=DistillFilter(**fl),
             scheduler=SchedulerConfig(**sched),
@@ -202,6 +216,10 @@ class DistillConfig(BaseModel):
                 skill_output_dir=raw.get("output", {}).get("skill_output_dir") or raw.get("skill_output_dir", "~/.trace2skill/skills"),
                 max_rules_per_skill=raw.get("output", {}).get("max_rules_per_skill") or raw.get("max_rules_per_skill", 15),
                 format=raw.get("output", {}).get("format", "skill_md"),
+                debug=DebugConfig(
+                    enabled=raw.get("output", {}).get("debug", {}).get("enabled", False),
+                    output_dir=raw.get("output", {}).get("debug", {}).get("output_dir", "~/.trace2skill/debug"),
+                ),
             ),
         )
 
@@ -240,17 +258,31 @@ def init_default_config(
         fast_cfg["connect_timeout"] = connect_timeout
         strong_cfg["connect_timeout"] = connect_timeout
 
+    # Build source section based on source_type
+    if source_type == "opencode":
+        source_section = {
+            "type": source_type,
+            "opencode": {"db_path": "~/.local/share/opencode/opencode.db"},
+        }
+    elif source_type == "codeagent":
+        source_section = {
+            "type": source_type,
+            "codeagent": {"db_path": "~/.local/share/opencode/db/ngagent.db"},
+        }
+    elif source_type == "chrys":
+        source_section = {
+            "type": source_type,
+            "chrys": {"sessions_dir": ""},
+        }
+    else:
+        source_section = {"type": source_type}
+
     config: dict = {
         "models": {
             "fast": fast_cfg,
             "strong": strong_cfg,
         },
-        "source": {
-            "type": source_type,
-            "opencode": {
-                "db_path": "~/.local/share/opencode/opencode.db",
-            },
-        },
+        "source": source_section,
         "filter": {
             "min_messages": 5,
             "min_tools": 3,
@@ -303,12 +335,15 @@ _CONFIG_KEY_MAP: dict[str, tuple[list[str], type]] = {
     "source.opencode.db_path": (["source", "opencode", "db_path"], str),
     "source.opencode.export_command": (["source", "opencode", "export_command"], str),
     "source.chrys.sessions_dir": (["source", "chrys", "sessions_dir"], str),
+    "source.codeagent.db_path": (["source", "codeagent", "db_path"], str),
     "filter.min_messages": (["filter", "min_messages"], int),
     "filter.min_tools": (["filter", "min_tools"], int),
     "analysis.clustering_max_topics": (["clustering_max_topics"], int),
     "output.format": (["output", "format"], str),
     "output.skill_output_dir": (["output", "skill_output_dir"], str),
     "output.max_rules_per_skill": (["output", "max_rules_per_skill"], int),
+    "output.debug.enabled": (["output", "debug", "enabled"], bool),
+    "output.debug.output_dir": (["output", "debug", "output_dir"], str),
 }
 
 
