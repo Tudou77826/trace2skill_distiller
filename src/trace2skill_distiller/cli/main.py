@@ -161,8 +161,25 @@ def cli(verbose: bool):
 @cli.command()
 @click.option("--api-key", prompt="API Key", help="LLM API 密钥")
 @click.option("--base-url", prompt="Base URL", help="LLM API 基础地址（如 https://api.openai.com/v1）")
-@click.option("--fast-model", default="openai/gpt-oss-120b", help="快速模型（用于预处理）")
-@click.option("--strong-model", default="openai/gpt-oss-120b", help="强力模型（用于蒸馏）")
+@click.option(
+    "--source",
+    "-s",
+    type=click.Choice(["opencode", "chrys", "codeagent"], case_sensitive=False),
+    prompt="数据源类型",
+    default="opencode",
+    help="选择数据源",
+)
+@click.option("--fast-model", prompt="快速模型", default="openai/gpt-oss-120b", help="快速模型（用于预处理）")
+@click.option("--strong-model", prompt="强力模型", default="openai/gpt-oss-120b", help="强力模型（用于蒸馏）")
+@click.option("--fast-concurrency", type=int, prompt="快速模型并发数", default=1, help="快速模型并发请求数")
+@click.option("--strong-concurrency", type=int, prompt="强力模型并发数", default=1, help="强力模型并发请求数")
+@click.option(
+    "--output-format",
+    type=click.Choice(["skill_md", "knowledge_md"], case_sensitive=False),
+    prompt="输出格式",
+    default="skill_md",
+    help="技能输出格式",
+)
 @click.option("--proxy", default="", help="代理地址（如 socks5://127.0.0.1:1080）")
 @click.option("--proxy-bypass", default="", help="不走代理的 host 正则，逗号分隔")
 @click.option("--verify-ssl/--no-verify-ssl", default=False, help="是否验证 SSL 证书")
@@ -171,8 +188,12 @@ def cli(verbose: bool):
 def init(
     api_key: str,
     base_url: str,
+    source: str,
     fast_model: str,
     strong_model: str,
+    fast_concurrency: int,
+    strong_concurrency: int,
+    output_format: str,
     proxy: str,
     proxy_bypass: str,
     verify_ssl: bool,
@@ -190,14 +211,18 @@ def init(
         verify_ssl=verify_ssl,
         timeout=timeout,
         connect_timeout=connect_timeout,
+        source_type=source.lower(),
+        fast_concurrency=fast_concurrency,
+        strong_concurrency=strong_concurrency,
+        output_format=output_format.lower(),
     )
     console.print(Panel(
         f"Config created: {path}\n"
         f"API key saved to: {path.parent / '.env'}\n"
-        f"Fast model: {fast_model}\n"
-        f"Strong model: {strong_model}\n"
-        f"Source: opencode (default)\n"
-        f"Tip: use 'trace2skill config set source.type chrys' to switch source later.",
+        f"Source: {source}\n"
+        f"Fast model: {fast_model} (concurrency={fast_concurrency})\n"
+        f"Strong model: {strong_model} (concurrency={strong_concurrency})\n"
+        f"Output format: {output_format}",
         title="Trace2Skill Initialized",
     ))
 

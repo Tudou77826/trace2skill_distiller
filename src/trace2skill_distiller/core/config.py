@@ -235,13 +235,16 @@ def init_default_config(
     timeout: float = 120.0,
     connect_timeout: float = 10.0,
     source_type: str = "opencode",
+    fast_concurrency: int = 1,
+    strong_concurrency: int = 1,
+    output_format: str = "skill_md",
 ) -> Path:
     """Create default config.yaml with provided credentials."""
     config_dir = Path.home() / ".trace2skill"
     config_dir.mkdir(parents=True, exist_ok=True)
 
-    fast_cfg: dict = {"model": fast_model, "max_tokens": 4096, "max_concurrency": 1, "max_rpm": 0}
-    strong_cfg: dict = {"model": strong_model, "max_tokens": 8192, "max_concurrency": 1, "max_rpm": 0}
+    fast_cfg: dict = {"model": fast_model, "max_tokens": 4096, "max_concurrency": fast_concurrency, "max_rpm": 0}
+    strong_cfg: dict = {"model": strong_model, "max_tokens": 8192, "max_concurrency": strong_concurrency, "max_rpm": 0}
     if verify_ssl:
         fast_cfg["verify_ssl"] = True
         strong_cfg["verify_ssl"] = True
@@ -286,6 +289,9 @@ def init_default_config(
         "filter": {
             "min_messages": 5,
             "min_tools": 3,
+        },
+        "output": {
+            "format": output_format,
         },
         "scheduler": {
             "enabled": False,
