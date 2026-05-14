@@ -175,6 +175,8 @@ class CodeAgentSource:
     def count_tools(self, session_id: str) -> int:
         """Count tool-call parts for a session."""
         db_path = self._get_db()
+        if not db_path.exists():
+            raise FileNotFoundError(f"CodeAgent database not found: {db_path}")
         conn = sqlite3.connect(str(db_path))
         try:
             result = conn.execute(
