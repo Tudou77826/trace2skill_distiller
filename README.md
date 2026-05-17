@@ -165,6 +165,26 @@ trace2skill init \
 
 ## 使用
 
+### 效果预览
+
+<p align="center"><code>trace2skill sessions list</code></p>
+<p align="center"><img src="docs/screenshots/sessions-list.svg" alt="sessions list" width="720"></p>
+
+<p align="center"><code>trace2skill doctor</code></p>
+<p align="center"><img src="docs/screenshots/doctor.svg" alt="doctor" width="720"></p>
+
+<p align="center"><code>trace2skill config show</code></p>
+<p align="center"><img src="docs/screenshots/config-show.svg" alt="config show" width="720"></p>
+
+<p align="center"><code>trace2skill usage</code></p>
+<p align="center"><img src="docs/screenshots/usage.svg" alt="usage" width="720"></p>
+
+<p align="center"><code>trace2skill runs list</code>&nbsp;&nbsp;/&nbsp;&nbsp;<code>trace2skill runs show &lt;id&gt;</code></p>
+<p align="center">
+<img src="docs/screenshots/runs-list.svg" alt="runs list" width="360">
+<img src="docs/screenshots/runs-show.svg" alt="runs show" width="360">
+</p>
+
 ### CLI 命令地图
 
 ```text

@@ -1,0 +1,162 @@
+<svg class="rich-terminal" viewBox="0 0 1238 708.8" xmlns="http://www.w3.org/2000/svg">
+    <!-- Generated with Rich https://www.textualize.io -->
+    <style>
+
+    @font-face {
+        font-family: "Fira Code";
+        src: local("FiraCode-Regular"),
+                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff2/FiraCode-Regular.woff2") format("woff2"),
+                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff/FiraCode-Regular.woff") format("woff");
+        font-style: normal;
+        font-weight: 400;
+    }
+    @font-face {
+        font-family: "Fira Code";
+        src: local("FiraCode-Bold"),
+                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff2/FiraCode-Bold.woff2") format("woff2"),
+                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff/FiraCode-Bold.woff") format("woff");
+        font-style: bold;
+        font-weight: 700;
+    }
+
+    .terminal-521146105-matrix {
+        font-family: Fira Code, monospace;
+        font-size: 20px;
+        line-height: 24.4px;
+        font-variant-east-asian: full-width;
+    }
+
+    .terminal-521146105-title {
+        font-size: 18px;
+        font-weight: bold;
+        font-family: arial;
+    }
+
+    .terminal-521146105-r1 { fill: #c5c8c6 }
+    </style>
+
+    <defs>
+    <clipPath id="terminal-521146105-clip-terminal">
+      <rect x="0" y="0" width="1219.0" height="657.8" />
+    </clipPath>
+    <clipPath id="terminal-521146105-line-0">
+    <rect x="0" y="1.5" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-1">
+    <rect x="0" y="25.9" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-2">
+    <rect x="0" y="50.3" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-3">
+    <rect x="0" y="74.7" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-4">
+    <rect x="0" y="99.1" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-5">
+    <rect x="0" y="123.5" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-6">
+    <rect x="0" y="147.9" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-7">
+    <rect x="0" y="172.3" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-8">
+    <rect x="0" y="196.7" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-9">
+    <rect x="0" y="221.1" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-10">
+    <rect x="0" y="245.5" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-11">
+    <rect x="0" y="269.9" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-12">
+    <rect x="0" y="294.3" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-13">
+    <rect x="0" y="318.7" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-14">
+    <rect x="0" y="343.1" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-15">
+    <rect x="0" y="367.5" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-16">
+    <rect x="0" y="391.9" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-17">
+    <rect x="0" y="416.3" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-18">
+    <rect x="0" y="440.7" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-19">
+    <rect x="0" y="465.1" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-20">
+    <rect x="0" y="489.5" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-21">
+    <rect x="0" y="513.9" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-22">
+    <rect x="0" y="538.3" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-23">
+    <rect x="0" y="562.7" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-24">
+    <rect x="0" y="587.1" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-521146105-line-25">
+    <rect x="0" y="611.5" width="1220" height="24.65"/>
+            </clipPath>
+    </defs>
+
+    <rect fill="#292929" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="1236" height="706.8" rx="8"/><text class="terminal-521146105-title" fill="#c5c8c6" text-anchor="middle" x="618" y="27">trace2skill&#160;sessions&#160;list</text>
+            <g transform="translate(26,22)">
+            <circle cx="0" cy="0" r="7" fill="#ff5f57"/>
+            <circle cx="22" cy="0" r="7" fill="#febc2e"/>
+            <circle cx="44" cy="0" r="7" fill="#28c840"/>
+            </g>
+        
+    <g transform="translate(9, 41)" clip-path="url(#terminal-521146105-clip-terminal)">
+    
+    <g class="terminal-521146105-matrix">
+    <text class="terminal-521146105-r1" x="0" y="20" textLength="1220" clip-path="url(#terminal-521146105-line-0)">C:\Program&#160;Files\Python310\lib\runpy.py:126:&#160;RuntimeWarning:&#160;&#x27;trace2skill_distiller.cli.main&#x27;&#160;found&#160;</text><text class="terminal-521146105-r1" x="1220" y="20" textLength="12.2" clip-path="url(#terminal-521146105-line-0)">
+</text><text class="terminal-521146105-r1" x="0" y="44.4" textLength="1146.8" clip-path="url(#terminal-521146105-line-1)">in&#160;sys.modules&#160;after&#160;import&#160;of&#160;package&#160;&#x27;trace2skill_distiller.cli&#x27;,&#160;but&#160;prior&#160;to&#160;execution&#160;of&#160;</text><text class="terminal-521146105-r1" x="1220" y="44.4" textLength="12.2" clip-path="url(#terminal-521146105-line-1)">
+</text><text class="terminal-521146105-r1" x="0" y="68.8" textLength="927.2" clip-path="url(#terminal-521146105-line-2)">&#x27;trace2skill_distiller.cli.main&#x27;;&#160;this&#160;may&#160;result&#160;in&#160;unpredictable&#160;behaviour</text><text class="terminal-521146105-r1" x="1220" y="68.8" textLength="12.2" clip-path="url(#terminal-521146105-line-2)">
+</text><text class="terminal-521146105-r1" x="0" y="93.2" textLength="329.4" clip-path="url(#terminal-521146105-line-3)">&#160;&#160;warn(RuntimeWarning(msg))</text><text class="terminal-521146105-r1" x="1220" y="93.2" textLength="12.2" clip-path="url(#terminal-521146105-line-3)">
+</text><text class="terminal-521146105-r1" x="0" y="117.6" textLength="963.8" clip-path="url(#terminal-521146105-line-4)">&#160;&#160;&#160;&#160;#&#160;&#160;Session&#160;ID&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;Msgs&#160;Tools&#160;&#160;Project&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;Date&#160;</text><text class="terminal-521146105-r1" x="1220" y="117.6" textLength="12.2" clip-path="url(#terminal-521146105-line-4)">
+</text><text class="terminal-521146105-r1" x="0" y="142" textLength="61" clip-path="url(#terminal-521146105-line-5)">Title</text><text class="terminal-521146105-r1" x="1220" y="142" textLength="12.2" clip-path="url(#terminal-521146105-line-5)">
+</text><text class="terminal-521146105-r1" x="0" y="166.4" textLength="963.8" clip-path="url(#terminal-521146105-line-6)">&#160;&#160;─────────────────────────────────────────────────────────────────────────────</text><text class="terminal-521146105-r1" x="1220" y="166.4" textLength="12.2" clip-path="url(#terminal-521146105-line-6)">
+</text><text class="terminal-521146105-r1" x="0" y="190.8" textLength="524.6" clip-path="url(#terminal-521146105-line-7)">───────────────────────────────────────────</text><text class="terminal-521146105-r1" x="1220" y="190.8" textLength="12.2" clip-path="url(#terminal-521146105-line-7)">
+</text><text class="terminal-521146105-r1" x="0" y="215.2" textLength="939.4" clip-path="url(#terminal-521146105-line-8)">&#160;&#160;&#160;&#160;1.&#160;0750f33c-7074-411a-92a2-9d5f4e8024b4&#160;&#160;msgs=&#160;111&#160;tools=&#160;42&#160;&#160;distiller&#160;&#160;</text><text class="terminal-521146105-r1" x="1220" y="215.2" textLength="12.2" clip-path="url(#terminal-521146105-line-8)">
+</text><text class="terminal-521146105-r1" x="0" y="239.6" textLength="146.4" clip-path="url(#terminal-521146105-line-9)">2026-05-17&#160;&#160;</text><text class="terminal-521146105-r1" x="1220" y="239.6" textLength="12.2" clip-path="url(#terminal-521146105-line-9)">
+</text><text class="terminal-521146105-r1" x="0" y="264" textLength="951.6" clip-path="url(#terminal-521146105-line-10)">&#160;&#160;&#160;&#160;2.&#160;9c012fd3-a828-450b-9c7a-5c753aed683d&#160;&#160;msgs=&#160;534&#160;tools=202&#160;&#160;OpsCopilot&#160;&#160;</text><text class="terminal-521146105-r1" x="1220" y="264" textLength="12.2" clip-path="url(#terminal-521146105-line-10)">
+</text><text class="terminal-521146105-r1" x="0" y="288.4" textLength="146.4" clip-path="url(#terminal-521146105-line-11)">2026-05-17&#160;&#160;</text><text class="terminal-521146105-r1" x="1220" y="288.4" textLength="12.2" clip-path="url(#terminal-521146105-line-11)">
+</text><text class="terminal-521146105-r1" x="0" y="312.8" textLength="939.4" clip-path="url(#terminal-521146105-line-12)">&#160;&#160;&#160;&#160;3.&#160;d83e6116-5d74-42f8-a860-ab6241d91bff&#160;&#160;msgs=&#160;&#160;69&#160;tools=&#160;21&#160;&#160;distiller&#160;&#160;</text><text class="terminal-521146105-r1" x="1220" y="312.8" textLength="12.2" clip-path="url(#terminal-521146105-line-12)">
+</text><text class="terminal-521146105-r1" x="0" y="337.2" textLength="146.4" clip-path="url(#terminal-521146105-line-13)">2026-05-15&#160;&#160;</text><text class="terminal-521146105-r1" x="1220" y="337.2" textLength="12.2" clip-path="url(#terminal-521146105-line-13)">
+</text><text class="terminal-521146105-r1" x="0" y="361.6" textLength="951.6" clip-path="url(#terminal-521146105-line-14)">&#160;&#160;&#160;&#160;4.&#160;cf03f610-95e2-4b7f-8f5d-8a4126866938&#160;&#160;msgs=&#160;265&#160;tools=&#160;71&#160;&#160;OpsCopilot&#160;&#160;</text><text class="terminal-521146105-r1" x="1220" y="361.6" textLength="12.2" clip-path="url(#terminal-521146105-line-14)">
+</text><text class="terminal-521146105-r1" x="0" y="386" textLength="146.4" clip-path="url(#terminal-521146105-line-15)">2026-05-15&#160;&#160;</text><text class="terminal-521146105-r1" x="1220" y="386" textLength="12.2" clip-path="url(#terminal-521146105-line-15)">
+</text><text class="terminal-521146105-r1" x="0" y="410.4" textLength="951.6" clip-path="url(#terminal-521146105-line-16)">&#160;&#160;&#160;&#160;5.&#160;0b164324-700c-43ed-8f37-ea3f85ba62b9&#160;&#160;msgs=&#160;545&#160;tools=153&#160;&#160;OpsCopilot&#160;&#160;</text><text class="terminal-521146105-r1" x="1220" y="410.4" textLength="12.2" clip-path="url(#terminal-521146105-line-16)">
+</text><text class="terminal-521146105-r1" x="0" y="434.8" textLength="146.4" clip-path="url(#terminal-521146105-line-17)">2026-05-15&#160;&#160;</text><text class="terminal-521146105-r1" x="1220" y="434.8" textLength="12.2" clip-path="url(#terminal-521146105-line-17)">
+</text><text class="terminal-521146105-r1" x="0" y="459.2" textLength="902.8" clip-path="url(#terminal-521146105-line-18)">&#160;&#160;&#160;&#160;6.&#160;43701690-dca4-4ebe-9b41-5f5824ada9ca&#160;&#160;msgs=&#160;474&#160;tools=136&#160;&#160;reader&#160;&#160;</text><text class="terminal-521146105-r1" x="1220" y="459.2" textLength="12.2" clip-path="url(#terminal-521146105-line-18)">
+</text><text class="terminal-521146105-r1" x="0" y="483.6" textLength="146.4" clip-path="url(#terminal-521146105-line-19)">2026-05-15&#160;&#160;</text><text class="terminal-521146105-r1" x="1220" y="483.6" textLength="12.2" clip-path="url(#terminal-521146105-line-19)">
+</text><text class="terminal-521146105-r1" x="0" y="508" textLength="939.4" clip-path="url(#terminal-521146105-line-20)">&#160;&#160;&#160;&#160;7.&#160;95aea55e-6abf-46b3-970f-9f51334be677&#160;&#160;msgs=&#160;545&#160;tools=157&#160;&#160;distiller&#160;&#160;</text><text class="terminal-521146105-r1" x="1220" y="508" textLength="12.2" clip-path="url(#terminal-521146105-line-20)">
+</text><text class="terminal-521146105-r1" x="0" y="532.4" textLength="146.4" clip-path="url(#terminal-521146105-line-21)">2026-05-15&#160;&#160;</text><text class="terminal-521146105-r1" x="1220" y="532.4" textLength="12.2" clip-path="url(#terminal-521146105-line-21)">
+</text><text class="terminal-521146105-r1" x="0" y="556.8" textLength="902.8" clip-path="url(#terminal-521146105-line-22)">&#160;&#160;&#160;&#160;8.&#160;8fc69127-e913-4434-a6bb-e61a02c2cb6b&#160;&#160;msgs=&#160;230&#160;tools=&#160;62&#160;&#160;reader&#160;&#160;</text><text class="terminal-521146105-r1" x="1220" y="556.8" textLength="12.2" clip-path="url(#terminal-521146105-line-22)">
+</text><text class="terminal-521146105-r1" x="0" y="581.2" textLength="146.4" clip-path="url(#terminal-521146105-line-23)">2026-05-14&#160;&#160;</text><text class="terminal-521146105-r1" x="1220" y="581.2" textLength="12.2" clip-path="url(#terminal-521146105-line-23)">
+</text><text class="terminal-521146105-r1" x="1220" y="605.6" textLength="12.2" clip-path="url(#terminal-521146105-line-24)">
+</text><text class="terminal-521146105-r1" x="0" y="630" textLength="841.8" clip-path="url(#terminal-521146105-line-25)">共&#160;8/44&#160;条&#160;|&#160;trace2skill&#160;inspect&#160;session&#160;&lt;ID&gt;&#160;|&#160;trace2skill&#160;run&#160;-s&#160;&lt;ID&gt;</text><text class="terminal-521146105-r1" x="1220" y="630" textLength="12.2" clip-path="url(#terminal-521146105-line-25)">
+</text><text class="terminal-521146105-r1" x="1220" y="654.4" textLength="12.2" clip-path="url(#terminal-521146105-line-26)">
+</text>
+    </g>
+    </g>
+</svg>
