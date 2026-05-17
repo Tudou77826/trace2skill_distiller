@@ -165,26 +165,6 @@ trace2skill init \
 
 ## 使用
 
-### 效果预览
-
-<p align="center"><code>trace2skill sessions list</code></p>
-<p align="center"><img src="docs/screenshots/sessions-list.svg" alt="sessions list" width="720"></p>
-
-<p align="center"><code>trace2skill doctor</code></p>
-<p align="center"><img src="docs/screenshots/doctor.svg" alt="doctor" width="720"></p>
-
-<p align="center"><code>trace2skill config show</code></p>
-<p align="center"><img src="docs/screenshots/config-show.svg" alt="config show" width="720"></p>
-
-<p align="center"><code>trace2skill usage</code></p>
-<p align="center"><img src="docs/screenshots/usage.svg" alt="usage" width="720"></p>
-
-<p align="center"><code>trace2skill runs list</code>&nbsp;&nbsp;/&nbsp;&nbsp;<code>trace2skill runs show &lt;id&gt;</code></p>
-<p align="center">
-<img src="docs/screenshots/runs-list.svg" alt="runs list" width="360">
-<img src="docs/screenshots/runs-show.svg" alt="runs show" width="360">
-</p>
-
 ### CLI 命令地图
 
 ```text
@@ -235,12 +215,18 @@ trace2skill init
 # 检查当前配置、source 和模型设置
 trace2skill doctor
 
+![doctor](docs/screenshots/doctor.svg)
+
 # 查看当前 source 下可用会话
 trace2skill sessions list
 trace2skill sessions list --project my-project
 
+![sessions list](docs/screenshots/sessions-list.svg)
+
 # 查看单个会话元信息
 trace2skill sessions show <session-id>
+
+![sessions show](docs/screenshots/sessions-show.svg)
 
 # 预览单个会话的预处理结果
 trace2skill inspect session <session-id>
@@ -264,9 +250,15 @@ trace2skill run --project my-project --preview
 trace2skill runs list
 trace2skill runs show <run-id>
 
+![runs list](docs/screenshots/runs-list.svg)
+
+![runs show](docs/screenshots/runs-show.svg)
+
 # 查看 token 消耗统计
 trace2skill usage --source opencode --days 30
 trace2skill usage --source claudecode --days 7 --project my-project
+
+![usage](docs/screenshots/usage.svg)
 ```
 
 ### 配置管理
@@ -274,6 +266,8 @@ trace2skill usage --source claudecode --days 7 --project my-project
 ```bash
 # 查看当前有效配置（API Key 脱敏）
 trace2skill config show
+
+![config show](docs/screenshots/config-show.svg)
 
 # 设置单个配置项（点分路径 key）
 trace2skill config set source.type chrys
