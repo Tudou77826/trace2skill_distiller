@@ -215,18 +215,18 @@ trace2skill init
 # 检查当前配置、source 和模型设置
 trace2skill doctor
 
-![doctor](docs/screenshots/doctor.svg)
+![doctor](docs/screenshots/doctor.png)
 
 # 查看当前 source 下可用会话
 trace2skill sessions list
 trace2skill sessions list --project my-project
 
-![sessions list](docs/screenshots/sessions-list.svg)
+![sessions list](docs/screenshots/sessions-list.png)
 
 # 查看单个会话元信息
 trace2skill sessions show <session-id>
 
-![sessions show](docs/screenshots/sessions-show.svg)
+![sessions show](docs/screenshots/sessions-show.png)
 
 # 预览单个会话的预处理结果
 trace2skill inspect session <session-id>
@@ -250,15 +250,15 @@ trace2skill run --project my-project --preview
 trace2skill runs list
 trace2skill runs show <run-id>
 
-![runs list](docs/screenshots/runs-list.svg)
+![runs list](docs/screenshots/runs-list.png)
 
-![runs show](docs/screenshots/runs-show.svg)
+![runs show](docs/screenshots/runs-show.png)
 
 # 查看 token 消耗统计
 trace2skill usage --source opencode --days 30
 trace2skill usage --source claudecode --days 7 --project my-project
 
-![usage](docs/screenshots/usage.svg)
+![usage](docs/screenshots/usage.png)
 ```
 
 ### 配置管理
@@ -267,7 +267,7 @@ trace2skill usage --source claudecode --days 7 --project my-project
 # 查看当前有效配置（API Key 脱敏）
 trace2skill config show
 
-![config show](docs/screenshots/config-show.svg)
+![config show](docs/screenshots/config-show.png)
 
 # 设置单个配置项（点分路径 key）
 trace2skill config set source.type chrys
