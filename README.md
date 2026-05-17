@@ -104,14 +104,31 @@ OpenCode / Chrys / CodeAgent / Claude Code 会话历史
 
 ## 安装
 
+要求 Python >= 3.10。
+
+### 方式一：从 Release 安装（推荐）
+
+从 [GitHub Releases](https://github.com/Tudou77826/trace2skill_distiller/releases) 下载最新 `.whl` 文件：
+
+```bash
+pip install trace2skill_distiller-0.1.0-py3-none-any.whl
+trace2skill init
+```
+
+### 方式二：从源码安装
+
 ```bash
 git clone https://github.com/Tudou77826/trace2skill_distiller.git
 cd trace2skill_distiller
 uv sync
-
-# 初始化配置（交互式）
 trace2skill init
-# 交互式提示：API Key、Base URL、数据源类型（opencode/chrys/codeagent/claudecode）、模型、并发数、输出格式等
+```
+
+### 初始化配置
+
+```bash
+# 交互式（推荐）
+trace2skill init
 
 # 或命令式指定：
 trace2skill init \
@@ -135,7 +152,7 @@ trace2skill init \
   --no-verify-ssl
 ```
 
-需要 SOCKS 代理时安装 `httpx[socks]`：`uv add "httpx[socks]"`。要求 Python >= 3.10。
+需要 SOCKS 代理时安装 `httpx[socks]`：`pip install "httpx[socks]"`（源码安装则为 `uv add "httpx[socks]"`）。
 
 ### 支持的数据源
 
