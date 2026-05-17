@@ -2,7 +2,7 @@
 
 **从 AI 编程会话中自动提炼可复用的技能知识。**
 
-分析你的 AI 编程会话记录（支持 [OpenCode](https://github.com/opencode-ai/opencode) 和 Chrys），用 LLM 提取可操作的实践经验和技能规则，写入 `SKILL.md` 供 AI 编程助手自动发现和复用。
+分析你的 AI 编程会话记录（支持 [OpenCode](https://github.com/opencode-ai/opencode)、Chrys、[CodeAgent](https://github.com/NgAgent/codeagent)、[Claude Code](https://claude.ai/code)），用 LLM 提取可操作的实践经验和技能规则，写入 `SKILL.md` 供 AI 编程助手自动发现和复用。
 
 ## 设计理念
 
@@ -13,7 +13,7 @@ AI 编程助手每天都在帮你写代码、调 Bug、做调研——但交互�
 ## 处理流水线
 
 ```
-OpenCode / Chrys 会话历史
+OpenCode / Chrys / CodeAgent / Claude Code 会话历史
        │
        ▼
 ┌──────────────────────────────────────────────┐
@@ -96,7 +96,7 @@ OpenCode / Chrys 会话历史
 | 模块 | Protocol | 当前实现 | 可扩展为 |
 |------|----------|----------|----------|
 | LLM 接驳 | `LLMProvider` | `OpenAICompatibleProvider` (httpx) | Anthropic、Azure、自定义 HTTP |
-| 数据采集 | `SessionSource` | `OpenCodeSource` (SQLite)、`ChrysSource` (JSON) | Claude Code JSONL、其他 Agent |
+| 数据采集 | `SessionSource` | `OpenCodeSource` (SQLite)、`ChrysSource` (JSON)、`CodeAgentSource` (SQLite)、`ClaudeCodeSource` (JSONL) | 其他 Coding Agent |
 | 聚类策略 | `ClusterStrategy` | `SemanticClusterStrategy` (LLM) | Embedding 向量聚类、关键词匹配 |
 | 蒸馏策略 | `DistillationStrategy` | `LLMDistillationStrategy` | 代码审查分析、架构决策提取 |
 | 技能格式 | `SkillFormatter` | `SkillMdFormatter` (SKILL.md) | JSON、Confluence Wiki |
@@ -109,12 +109,20 @@ git clone https://github.com/Tudou77826/trace2skill_distiller.git
 cd trace2skill_distiller
 uv sync
 
-# 初始化配置
+# 初始化配置（交互式）
+trace2skill init
+# 交互式提示：API Key、Base URL、数据源类型（opencode/chrys/codeagent/claudecode）、模型、并发数、输出格式等
+
+# 或命令式指定：
 trace2skill init \
   --api-key "your-api-key" \
   --base-url "https://api.example.com/v1" \
+  --source "opencode" \
   --fast-model "gpt-4o-mini" \
-  --strong-model "gpt-4o"
+  --strong-model "gpt-4o" \
+  --fast-concurrency 4 \
+  --strong-concurrency 2 \
+  --output-format "skill_md"
 
 # 可选：代理、超时等
 trace2skill init \
@@ -122,10 +130,21 @@ trace2skill init \
   --base-url "https://api.example.com/v1" \
   --proxy "socks5://127.0.0.1:1080" \
   --proxy-bypass "localhost,127\\.0\\.0\\.1" \
-  --timeout 180
+  --timeout 180 \
+  --connect-timeout 10 \
+  --no-verify-ssl
 ```
 
 需要 SOCKS 代理时安装 `httpx[socks]`：`uv add "httpx[socks]"`。要求 Python >= 3.10。
+
+### 支持的数据源
+
+| 数据源 | 配置类型 | 数据位置 | 说明 |
+|--------|----------|----------|------|
+| OpenCode | `opencode` | `~/.local/share/opencode/opencode.db` | SQLite + CLI export |
+| Chrys | `chrys` | 自动探测或指定目录 | JSON 文件 |
+| CodeAgent | `codeagent` | `~/.local/share/opencode/db/ngagent.db` | SQLite 直接读取 |
+| Claude Code | `claudecode` | `~/.claude/projects/` | JSONL 文件 |
 
 ## 使用
 
@@ -150,9 +169,10 @@ trace2skill
 │   ├── [--mode preprocess|analyze|full]
 │   ├── [--output skill|knowledge]
 │   └── [--preview]
-└── runs
-    ├── list
-    └── show <run-id>
+├── runs
+│   ├── list
+│   └── show <run-id>
+└── usage [--source <type>] [--days <n>] [--project <name>]
 ```
 
 ### 命令职责
@@ -169,6 +189,7 @@ trace2skill
 | `trace2skill run ...` | 运行蒸馏流程 |
 | `trace2skill runs list` | 查看历史运行列表 |
 | `trace2skill runs show <id>` | 查看单次运行的统计、报告和输出信息 |
+| `trace2skill usage` | 查看最近 N 天的 token 消耗统计 |
 
 ```bash
 # 首次初始化
@@ -205,6 +226,10 @@ trace2skill run --project my-project --preview
 # 查看历史运行
 trace2skill runs list
 trace2skill runs show <run-id>
+
+# 查看 token 消耗统计
+trace2skill usage --source opencode --days 30
+trace2skill usage --source claudecode --days 7 --project my-project
 ```
 
 ### 配置管理
@@ -299,11 +324,15 @@ models:
     max_rpm: 20                                 # 蒸馏每分钟请求上限，0 表示不限制
 
 source:
-  type: "opencode"
+  type: "opencode"                        # opencode | chrys | codeagent | claudecode
   opencode:
     db_path: "~/.local/share/opencode/opencode.db"
   chrys:
-    sessions_dir: ""                            # 留空表示自动探测
+    sessions_dir: ""                        # 留空表示自动探测
+  codeagent:
+    db_path: "~/.local/share/opencode/db/ngagent.db"
+  claudecode:
+    projects_dir: "~/.claude/projects"
 
 filter:
   min_messages: 5
@@ -355,7 +384,9 @@ src/trace2skill_distiller/
 │   ├── sources/
 │   │   ├── base.py                  # Protocol: SessionSource
 │   │   ├── opencode.py             # OpenCode SQLite + CLI export
-│   │   └── chrys.py                # Chrys JSON 文件源
+│   │   ├── chrys.py                # Chrys JSON 文件源
+│   │   ├── codeagent.py            # CodeAgent SQLite 直接读取
+│   │   └── claudecode.py           # Claude Code JSONL 文件源
 │   ├── preprocess/
 │   │   ├── compress.py              # L0 智能压缩 (纯规则)
 │   │   ├── extract.py               # L1/L2 LLM 提取
