@@ -20,5 +20,8 @@ Thumbs.db
 # Secrets & local config
 .env
 
+# PyInstaller
+*.manifest
+
 # uv lock (optional, keep if you want reproducible installs)
 # uv.lock
