@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,6 +15,7 @@ from trace2skill_distiller.analysis.types import (
 )
 from trace2skill_distiller.core.config import DistillConfig, OutputConfig
 from trace2skill_distiller.mining.types import SessionMeta, TrajectorySummary
+from trace2skill_distiller.mining.types import Message, MessageInfo, Session, SessionInfo
 from trace2skill_distiller.orchestrator.pipeline import DistillPipeline
 from trace2skill_distiller.output.types import ShapingResult
 
@@ -41,6 +43,25 @@ class _FakeMining:
                 label_score=0.9,
             )
         ]
+
+
+class _ManyFakeMining:
+    def __init__(self):
+        self.mined_ids = []
+
+    def list_available(self, project=None, since=None):
+        return [
+            SessionMeta(id="old", title="Old", project="demo", msg_count=10, tool_count=3, timestamp=1),
+            SessionMeta(id="newest", title="Newest", project="demo", msg_count=10, tool_count=3, timestamp=3),
+            SessionMeta(id="middle", title="Middle", project="demo", msg_count=10, tool_count=3, timestamp=2),
+        ]
+
+    def filter_candidates(self, sessions_meta, min_messages, min_tools):
+        return sessions_meta
+
+    def mine(self, session_ids):
+        self.mined_ids = list(session_ids)
+        return []
 
 
 class _FakeAnalysis:
@@ -116,3 +137,62 @@ def test_full_mode_writes_json_and_html_reports(tmp_path):
     assert fake_output.called == 1
     assert (report_dir / f"{report.run_id}.json").exists()
     assert (report_dir / f"{report.run_id}.html").exists()
+
+
+def test_max_sessions_limits_to_latest_sessions(tmp_path):
+    cfg = DistillConfig(output=OutputConfig(skill_output_dir=str(tmp_path / "skills")))
+    mining = _ManyFakeMining()
+    pipeline = DistillPipeline(mining, _FakeAnalysis(), _FakeOutput(tmp_path / "unused"), _FakeLLM(), _FakeLLM(), cfg)
+
+    with patch("trace2skill_distiller.orchestrator.pipeline.Path.home", return_value=tmp_path):
+        pipeline.run(project="demo", mode="preprocess", preview=True, max_sessions=2)
+
+    assert mining.mined_ids == ["newest", "middle"]
+
+
+def test_incremental_skips_processed_before_limit(tmp_path):
+    cfg = DistillConfig(output=OutputConfig(skill_output_dir=str(tmp_path / "skills")))
+    mining = _ManyFakeMining()
+    pipeline = DistillPipeline(mining, _FakeAnalysis(), _FakeOutput(tmp_path / "unused"), _FakeLLM(), _FakeLLM(), cfg)
+    state_dir = tmp_path / ".trace2skill"
+    state_dir.mkdir()
+    (state_dir / "state.json").write_text(
+        json.dumps({
+            "last_run": "2026-06-23T10:00:00",
+            "processed_sessions": ["newest"],
+            "stats": {"total_processed": 1},
+        }),
+        encoding="utf-8",
+    )
+
+    with patch("trace2skill_distiller.orchestrator.pipeline.Path.home", return_value=tmp_path):
+        pipeline.run(project="demo", mode="preprocess", preview=True, max_sessions=2, incremental=True)
+
+    assert mining.mined_ids == ["middle", "old"]
+
+
+def test_selected_session_ids_are_processed_in_user_order(tmp_path):
+    cfg = DistillConfig(output=OutputConfig(skill_output_dir=str(tmp_path / "skills")))
+    mining = _ManyFakeMining()
+    pipeline = DistillPipeline(mining, _FakeAnalysis(), _FakeOutput(tmp_path / "unused"), _FakeLLM(), _FakeLLM(), cfg)
+
+    class _SelectedSource:
+        def get_session(self, session_id):
+            return Session(
+                info=SessionInfo(
+                    id=session_id,
+                    title=f"Selected {session_id}",
+                    directory="D:/demo",
+                    time={"created": 100},
+                ),
+                messages=[Message(info=MessageInfo(role="user"))],
+            )
+
+        def count_tools(self, session_id):
+            return 3
+
+    with patch("trace2skill_distiller.orchestrator.pipeline.create_source", return_value=_SelectedSource()), \
+         patch("trace2skill_distiller.orchestrator.pipeline.Path.home", return_value=tmp_path):
+        pipeline.run(project="demo", mode="preprocess", preview=True, session_ids=["middle", "old"])
+
+    assert mining.mined_ids == ["middle", "old"]

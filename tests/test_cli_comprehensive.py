@@ -51,6 +51,9 @@ def test(name, cmd, expect_exit=0, check=None):
     return r
 
 
+test.__test__ = False
+
+
 def section(title):
     print()
     print("=" * 60)
@@ -64,12 +67,13 @@ def section(title):
 section("T1: 基础 CLI 框架")
 
 test("--help 有命令列表", ["--help"], 0, lambda o: "Commands:" in o)
-test("--version 有版本号", ["--version"], 0, lambda o: "0.1" in o)
+test("--version 有版本号", ["--version"], 0, lambda o: "0.2" in o)
 test("无效命令返回错误", ["foobar"], 2)
 
-# 所有顶级命令
-test("顶级命令完整(7个)", ["--help"], 0,
-     lambda o: all(c in o for c in ["init", "config", "doctor", "inspect", "run", "runs", "sessions"]))
+# Default help shows the simplified product surface; advanced commands remain callable.
+test("顶级命令收敛到核心入口", ["--help"], 0,
+     lambda o: all(c in o for c in ["gui", "dream", "memory", "init", "config", "doctor"])
+     and "sessions  " not in o and "inspect   " not in o and "runs      " not in o)
 
 # 每个命令的 --help
 for cmd in ["init", "config", "doctor", "inspect", "run", "runs", "sessions"]:

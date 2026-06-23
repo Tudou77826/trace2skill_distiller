@@ -24,6 +24,7 @@ from ..analysis.distillation.llm_distill import LLMDistillationStrategy
 from ..output.output_facade import OutputLayer, DefaultOutputLayer
 from ..output.formatters.skill_md import SkillMdFormatter, save_trajectories
 from ..output.presenters.html_report import HtmlReportPresenter
+from ..output.state import StateManager
 from ..output.types import (
     DistillReport, SessionEntry, TopicEntry, StepTiming, LLMUsage,
 )
@@ -63,8 +64,11 @@ class DistillPipeline:
         self,
         project: str | None = None,
         session_id: str | None = None,
+        session_ids: list[str] | None = None,
         mode: str = "full",
         preview: bool = False,
+        max_sessions: int | None = None,
+        incremental: bool = False,
     ) -> DistillReport:
         """Run the full distillation pipeline."""
         if mode not in {"preprocess", "analyze", "full"}:
@@ -82,26 +86,45 @@ class DistillPipeline:
         console.print(f"\n[bold]Trace2Skill Distiller[/] [dim]run:{run_id}[/]")
 
         # ── Step 0: List sessions ──
-        if session_id:
+        selected_session_ids = list(dict.fromkeys(session_ids or ([session_id] if session_id else [])))
+        if selected_session_ids:
             # Fetch real metadata for the specified session
             source = create_source(self._config.source)
-            raw = source.get_session(session_id)
-            if raw:
-                tool_count = source.count_tools(session_id)
-                msg_count = len(raw.messages)
-                sessions_meta = [SessionMeta(
-                    id=session_id,
-                    title=raw.info.title or "",
-                    project=raw.project_name or "",
-                    msg_count=msg_count,
-                    tool_count=tool_count,
-                    timestamp=raw.info.time.get("created", 0),
-                )]
-            else:
-                # Fallback: session exists in list but get_session returned nothing
-                sessions_meta = [SessionMeta(id=session_id, title="(specified session)")]
+            sessions_meta = []
+            for selected_id in selected_session_ids:
+                raw = source.get_session(selected_id)
+                if raw:
+                    tool_count = source.count_tools(selected_id)
+                    msg_count = len(raw.messages)
+                    sessions_meta.append(SessionMeta(
+                        id=selected_id,
+                        title=raw.info.title or "",
+                        project=raw.project_name or "",
+                        msg_count=msg_count,
+                        tool_count=tool_count,
+                        timestamp=raw.info.time.get("created", 0),
+                    ))
+                else:
+                    # Fallback: session exists in list but get_session returned nothing
+                    sessions_meta.append(SessionMeta(id=selected_id, title="(specified session)"))
         else:
             sessions_meta = self._mining.list_available(project=project, since=None)
+            if incremental:
+                processed = set(StateManager().load().processed_sessions)
+                if processed:
+                    before = len(sessions_meta)
+                    sessions_meta = [s for s in sessions_meta if s.id not in processed]
+                    skipped = before - len(sessions_meta)
+                    if skipped:
+                        console.print(f"[dim]Skipping {skipped} already processed session(s). Use --all to include them.[/]")
+            if max_sessions or incremental:
+                sessions_meta.sort(key=lambda s: (s.timestamp, s.msg_count, s.tool_count), reverse=True)
+            if max_sessions and max_sessions > 0 and len(sessions_meta) > max_sessions:
+                console.print(
+                    f"[dim]Limiting review to latest {max_sessions} sessions "
+                    f"(out of {len(sessions_meta)} available).[/]"
+                )
+                sessions_meta = sessions_meta[:max_sessions]
 
         if not sessions_meta:
             console.print("[yellow]No sessions found.[/]")
@@ -305,7 +328,7 @@ class DistillPipeline:
                     t.output_path = str(p)
 
         report.steps.append(StepTiming(
-            name="Write SKILL.md Files",
+            name="Write Memory Artifacts",
             duration_seconds=time.monotonic() - step_start,
         ))
         console.print(
@@ -321,8 +344,8 @@ class DistillPipeline:
         console.print(Panel(
             f"Sessions analyzed: {len(trajectories)}\n"
             f"Topics discovered: {len(analysis_result.clustering.clusters)}\n"
-            f"Skills written: {len(shaping.written_paths)}\n"
-            f"Total rules: {total_rules}\n"
+            f"Artifacts written: {len(shaping.written_paths)}\n"
+            f"Memory items: {total_rules}\n"
             f"Output: {output_display}",
             title="Distillation Complete",
         ))

@@ -1,6 +1,6 @@
 [project]
 name = "trace2skill-distiller"
-version = "0.2.0"
+version = "0.3.0"
 description = "Distill reusable skills from OpenCode session traces via LLM"
 readme = "README.md"
 requires-python = ">=3.10"

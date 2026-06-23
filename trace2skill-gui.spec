@@ -1,28 +1,23 @@
 # -*- mode: python ; coding: utf-8 -*-
 import importlib.util
-import sys
 from pathlib import Path
 
 block_cipher = None
 
-# Collect rich._unicode_data submodules (lazy-loaded by rich)
 _rich_unicode_data = []
 _spec = importlib.util.find_spec('rich._unicode_data')
 if _spec and _spec.submodule_search_locations:
     for p in Path(_spec.submodule_search_locations[0]).glob('*.py'):
-        mod = f'rich._unicode_data.{p.stem}'
         if p.stem != '__init__':
-            _rich_unicode_data.append(mod)
+            _rich_unicode_data.append(f'rich._unicode_data.{p.stem}')
 
 a = Analysis(
-    ['entrypoint.py'],
+    ['gui_entrypoint.py'],
     pathex=['src'],
     binaries=[],
     datas=[],
     hiddenimports=[
-        # click
         'click',
-        # openai / httpx
         'openai',
         'httpx',
         'httpcore',
@@ -33,26 +28,25 @@ a = Analysis(
         'idna',
         'h2',
         'socksio',
-        # pydantic
         'pydantic',
         'pydantic.deprecated.decorator',
         'pydantic_core',
         'annotated_types',
-        # pyyaml
         'yaml',
-        # rich
         'rich',
         'rich._unicode_data',
         *_rich_unicode_data,
         'markdown_it',
         'mdurl',
-        # schedule
         'schedule',
-        # standard lib
         'sqlite3',
         'json',
         'pathlib',
         'typing_extensions',
+        'http.server',
+        'webbrowser',
+        'socket',
+        'threading',
     ],
     hookspath=[],
     hooksconfig={},
@@ -71,27 +65,21 @@ pyz = PYZ(a.pure, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
-    exclude_binaries=True,
-    name='trace2skill',
+    name='trace2skill-gui',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
     icon=None,
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=True,
-    name='trace2skill',
 )

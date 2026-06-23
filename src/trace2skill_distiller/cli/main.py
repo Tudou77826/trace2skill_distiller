@@ -21,6 +21,19 @@ from ..llm.providers.openai_compatible import OpenAICompatibleProvider
 from ..mining.sources import create_source
 from ..orchestrator.pipeline import DistillPipeline
 from ..output.types import DistillReport
+from ..output.formatters.memory_md import (
+    AGENT_CONTEXT_FILENAME,
+    MEMORY_TYPE_LABELS,
+    STORE_FILENAME,
+    load_memory_store,
+    refresh_memory_files,
+    summarize_memory_quality,
+)
+from ..gui.server import run_gui
+
+
+INSTALLED_MEMORY_FILENAME = "trace2skill-memory.md"
+CLAUDE_IMPORT_MARKER = "<!-- trace2skill-memory-import -->"
 
 
 def _setup_logging() -> None:
@@ -115,12 +128,27 @@ def _iter_reports() -> list[tuple[Path, DistillReport]]:
 
 def _resolve_output_format(output_format: str) -> str:
     """Map user-facing output choices to internal formatter ids."""
-    return "knowledge_md" if output_format == "knowledge" else "skill_md"
+    mapping = {
+        "memory": "memory_md",
+        "memory_md": "memory_md",
+        "knowledge": "knowledge_md",
+        "knowledge_md": "knowledge_md",
+        "skill": "skill_md",
+        "skill_md": "skill_md",
+    }
+    if output_format not in mapping:
+        raise ValueError(f"Unknown output format: {output_format}")
+    return mapping[output_format]
 
 
 def _display_output_format(output_format: str) -> str:
     """Map internal formatter ids to user-facing labels."""
-    return "knowledge" if output_format == "knowledge_md" else "skill"
+    mapping = {
+        "memory_md": "memory",
+        "knowledge_md": "knowledge",
+        "skill_md": "skill",
+    }
+    return mapping.get(output_format, output_format)
 
 
 def _fmt_timestamp(ts: int) -> str:
@@ -137,27 +165,39 @@ def _fmt_timestamp(ts: int) -> str:
 
 
 @click.group()
-@click.version_option("0.1.0")
+@click.version_option("0.2.0")
 @click.option("--verbose", "-v", is_flag=True, help="显示详细日志（INFO 级别）")
 def cli(verbose: bool):
     """Trace2Skill Distiller。
 
     \b
     常用流程:
-      $ trace2skill init
-      $ trace2skill config show
-      $ trace2skill sessions list
-      $ trace2skill inspect session <SESSION_ID>
-      $ trace2skill run --project my-project
-      $ trace2skill runs list
+      $ trace2skill gui
+      $ trace2skill dream --project my-project --install-context
+      $ trace2skill memory next --project my-project
+      $ trace2skill memory review --project my-project
 
     \b
+    `gui` 是推荐入口：选择历史会话，提取高价值记忆，并查看待复审内容。
+    `dream` 是命令行入口：回顾会话，合并长期记忆，并生成 agent context。
     当前数据来源、模型级并发限制等都来自配置文件。
     `project` 和 `session` 只在当前 source 范围内解释，不会跨多种 coding 软件遍历。
     """
     _setup_logging()
     if verbose:
         logging.getLogger("trace2skill_distiller").setLevel(logging.INFO)
+
+
+@cli.command()
+@click.option("--host", default="127.0.0.1", show_default=True, help="Host for the local GUI server.")
+@click.option("--port", type=int, default=8765, show_default=True, help="Port for the local GUI server.")
+@click.option("--open", "open_browser", is_flag=True, help="Open the GUI in the default browser.")
+def gui(host: str, port: int, open_browser: bool):
+    """Start the local session selection and memory review GUI."""
+    url = f"http://{host}:{port}"
+    console.print(f"[green]Trace2Skill GUI:[/] {url}")
+    console.print("[dim]Press Ctrl+C to stop.[/]")
+    run_gui(host=host, port=port, open_browser=open_browser)
 
 
 @cli.command()
@@ -177,9 +217,9 @@ def cli(verbose: bool):
 @click.option("--strong-concurrency", type=int, prompt="强力模型并发数", default=1, help="强力模型并发请求数")
 @click.option(
     "--output-format",
-    type=click.Choice(["skill_md", "knowledge_md"], case_sensitive=False),
+    type=click.Choice(["memory_md", "knowledge_md", "skill_md"], case_sensitive=False),
     prompt="输出格式",
-    default="skill_md",
+    default="memory_md",
     help="技能输出格式",
 )
 @click.option("--proxy", default="", help="代理地址（如 socks5://127.0.0.1:1080）")
@@ -352,7 +392,7 @@ def config_edit():
         console.print(f"[red]Failed to open editor: {exc}[/]")
 
 
-@cli.group()
+@cli.group(hidden=True)
 def sessions():
     """查看当前 source 下的会话。"""
 
@@ -457,7 +497,7 @@ def sessions_show(session_id: str):
     console.print("[dim]Next: inspect preprocessing with `trace2skill inspect session <ID>` or run distillation with `trace2skill run --session <ID>`.[/]")
 
 
-@cli.group()
+@cli.group(hidden=True)
 def inspect():
     """查看会话预处理结果或历史运行详情。"""
 
@@ -554,7 +594,7 @@ def inspect_run(run_id: str):
         console.print(step_table)
 
 
-@cli.command()
+@cli.command(hidden=True)
 @click.option("--project", "-p", help="按项目名称过滤（只在当前 source 内解释）")
 @click.option("--session", "-s", "session_id", help="指定单个会话 ID")
 @click.option(
@@ -567,20 +607,100 @@ def inspect_run(run_id: str):
 @click.option(
     "--output",
     "output_format",
-    type=click.Choice(["skill", "knowledge"], case_sensitive=False),
-    default="knowledge",
+    type=click.Choice(["memory", "knowledge", "skill"], case_sensitive=False),
+    default="memory",
     show_default=True,
     help="输出格式",
 )
 @click.option("--preview", is_flag=True, help="只预览，不写任何文件或状态")
+@click.option("--limit", type=int, default=None, help="最多处理最近 N 个会话")
+@click.option("--incremental", is_flag=True, help="跳过已经处理过的会话")
 def run(
     project: str | None,
     session_id: str | None,
     mode: str,
     output_format: str,
     preview: bool,
+    limit: int | None,
+    incremental: bool,
 ):
     """运行蒸馏流程，默认使用当前配置中的 source、模型和并发。"""
+    _run_pipeline_command(
+        project=project,
+        session_id=session_id,
+        mode=mode.lower(),
+        output_format=output_format.lower(),
+        preview=preview,
+        max_sessions=limit,
+        incremental=incremental,
+        title="Run Settings",
+    )
+
+
+@cli.command()
+@click.option("--project", "-p", help="Review sessions from one project.")
+@click.option("--session", "-s", "session_id", help="Review one session.")
+@click.option("--limit", type=int, default=20, show_default=True, help="Review only the latest N sessions.")
+@click.option("--all", "include_all", is_flag=True, help="Include sessions that were already processed.")
+@click.option("--preview", is_flag=True, help="Preview without writing memory files or state.")
+@click.option("--install-context", is_flag=True, help="Install generated agent context into CLAUDE.md after the review.")
+@click.option(
+    "--target",
+    type=click.Path(path_type=Path),
+    default=Path("CLAUDE.md"),
+    show_default=True,
+    help="Claude Code project memory file to update when --install-context is used.",
+)
+@click.option(
+    "--import-file",
+    "import_file",
+    type=click.Path(path_type=Path),
+    default=Path(INSTALLED_MEMORY_FILENAME),
+    show_default=True,
+    help="Imported memory file path when --install-context is used.",
+)
+def dream(
+    project: str | None,
+    session_id: str | None,
+    limit: int,
+    include_all: bool,
+    preview: bool,
+    install_context: bool,
+    target: Path,
+    import_file: Path,
+):
+    """Review sessions and consolidate long-term memory."""
+    if preview and install_context:
+        raise click.UsageError("`--install-context` cannot be used with `--preview`.")
+
+    report = _run_pipeline_command(
+        project=project,
+        session_id=session_id,
+        mode="full",
+        output_format="memory",
+        preview=preview,
+        max_sessions=limit,
+        incremental=not include_all,
+        title="Dream Review",
+    )
+    if install_context:
+        _install_context_files(report.project, target, import_file)
+    if not preview:
+        _print_memory_next(report.project, limit=5, missing_ok=True)
+
+
+def _run_pipeline_command(
+    *,
+    project: str | None,
+    session_id: str | None,
+    mode: str,
+    output_format: str,
+    preview: bool,
+    max_sessions: int | None,
+    incremental: bool,
+    title: str,
+) -> DistillReport:
+    """Shared execution for advanced run and simple dream commands."""
     if project and session_id:
         raise click.UsageError("`--project` and `--session` cannot be used together.")
 
@@ -599,20 +719,682 @@ def run(
         f"Session: {session_id or '(none)'}\n"
         f"Mode: {mode}\n"
         f"Preview: {preview}\n"
+        f"Limit: {max_sessions or '(none)'}\n"
+        f"Incremental: {incremental}\n"
         f"Output: {_display_output_format(cfg.output.format)}",
-        title="Run Settings",
+        title=title,
     ))
 
     pipeline = DistillPipeline.from_config(cfg)
-    pipeline.run(
+    return pipeline.run(
         project=project,
         session_id=session_id,
-        mode=mode.lower(),
+        mode=mode,
         preview=preview,
+        max_sessions=max_sessions,
+        incremental=incremental,
     )
 
 
+@cli.command(hidden=True)
+@click.option("--project", "-p", required=True, help="Project memory to show.")
+def context(project: str):
+    """Show compact agent context generated by dream."""
+    cfg = _load_config()
+    path = Path(cfg.output.skill_output_dir).expanduser() / project / AGENT_CONTEXT_FILENAME
+    if not path.exists():
+        console.print(f"[yellow]No agent context found for project '{project}'. Run `trace2skill dream --project {project}` first.[/]")
+        return
+    console.print(Panel(path.read_text(encoding="utf-8"), title=str(path)))
+
+
 @cli.group()
+def memory():
+    """Manage consolidated memory items."""
+
+
+@memory.command("show")
+@click.argument("memory_id")
+@click.option("--project", "-p", required=True, help="Project memory store.")
+def memory_show(memory_id: str, project: str):
+    """Show one memory item by id or id prefix."""
+    cfg = _load_config()
+    output_dir = Path(cfg.output.skill_output_dir).expanduser()
+    store = load_memory_store(output_dir, project)
+    item = _find_memory_item(store, memory_id)
+    if not item:
+        console.print(f"[red]Memory not found: {memory_id}[/]")
+        raise SystemExit(1)
+    console.print(Panel(_format_memory_detail(item), title=f"Memory {item.get('id', '')}"))
+
+
+@memory.command("stats")
+@click.option("--project", "-p", help="Project memory store. Omit to summarize all projects.")
+def memory_stats(project: str | None):
+    """Show memory store health metrics."""
+    cfg = _load_config()
+    output_dir = Path(cfg.output.skill_output_dir).expanduser()
+    stores = _load_memory_stores(output_dir, project)
+    if not stores:
+        console.print("[yellow]No memory stores found. Run `trace2skill dream` first.[/]")
+        return
+
+    table = Table(title="Memory Health")
+    table.add_column("Project", width=16)
+    table.add_column("Score", justify="right")
+    table.add_column("Status")
+    table.add_column("Total", justify="right")
+    table.add_column("Agent", justify="right")
+    table.add_column("Review", justify="right")
+    table.add_column("Archived", justify="right")
+    table.add_column("Conflict", justify="right")
+    table.add_column("No Evidence", justify="right")
+    table.add_column("Updated")
+
+    totals = {
+        "score": 0,
+        "total": 0,
+        "agent": 0,
+        "review": 0,
+        "archived": 0,
+        "conflict": 0,
+        "missing_evidence": 0,
+    }
+    type_counts: dict[str, int] = {}
+    quality_lines: list[str] = []
+
+    for project_name, store in stores:
+        stats = _memory_store_stats(store)
+        quality = summarize_memory_quality(store)
+        quality_lines.append(f"{project_name}: Score {quality['score']}/100, Status {quality['label']}")
+        totals["score"] += quality["score"]
+        for key in totals:
+            if key == "score":
+                continue
+            totals[key] += stats[key]
+        for mem_type, count in stats["types"].items():
+            type_counts[mem_type] = type_counts.get(mem_type, 0) + count
+        table.add_row(
+            project_name[:16],
+            str(quality["score"]),
+            quality["label"],
+            str(stats["total"]),
+            str(stats["agent"]),
+            str(stats["review"]),
+            str(stats["archived"]),
+            str(stats["conflict"]),
+            str(stats["missing_evidence"]),
+            (store.get("updated_at") or "")[:19],
+        )
+
+    console.print(table)
+    console.print("[dim]Quality: " + "; ".join(quality_lines) + "[/]")
+
+    summary = Table(title="Type Distribution")
+    summary.add_column("Type")
+    summary.add_column("Count", justify="right")
+    for mem_type, count in sorted(type_counts.items()):
+        summary.add_row(_display_memory_type(mem_type), str(count))
+    console.print(summary)
+
+    if len(stores) > 1:
+        avg_score = round(totals["score"] / len(stores))
+        console.print(
+            f"[dim]Totals: avg score {avg_score}/100, {totals['total']} memories, {totals['agent']} agent-ready, "
+            f"{totals['review']} need review, {totals['conflict']} conflicts.[/]"
+        )
+
+
+@memory.command("next")
+@click.option("--project", "-p", help="Project memory store. Omit to summarize all projects.")
+@click.option("--limit", type=int, default=5, show_default=True, help="Maximum review items to show per project.")
+def memory_next(project: str | None, limit: int):
+    """Show the next best actions for improving memory quality."""
+    _print_memory_next(project, limit=limit, missing_ok=False)
+
+
+def _print_memory_next(project: str | None, limit: int, missing_ok: bool) -> None:
+    """Render memory quality next actions for one or more projects."""
+    cfg = _load_config()
+    output_dir = Path(cfg.output.skill_output_dir).expanduser()
+    stores = _load_memory_stores(output_dir, project)
+    if not stores:
+        if not missing_ok:
+            console.print("[yellow]No memory stores found. Run `trace2skill dream` first.[/]")
+        return
+
+    for project_name, store in stores:
+        quality = summarize_memory_quality(store)
+        queue = _memory_review_queue(store, limit)
+        lines = [
+            f"Score: {quality['score']}/100",
+            f"Status: {quality['label']}",
+            f"Agent-ready: {quality['agent_ready']} / {quality['total']}",
+            f"Needs review: {quality['review']}",
+            f"Conflicts: {quality['conflict']}",
+            f"Missing evidence: {quality['missing_evidence']}",
+            "",
+            "Next actions:",
+        ]
+        lines.extend(f"- {action}" for action in quality["next_actions"])
+        if queue:
+            lines.extend(["", "Top review items:"])
+            for item in queue:
+                reason = _memory_review_reason(item)
+                lines.append(f"- [{item.get('id', '')}] {reason}: {item.get('action', '')}")
+            lines.extend([
+                "",
+                f"Run `trace2skill memory review --project {project_name}` to accept, edit, or archive these items.",
+            ])
+        else:
+            lines.extend(["", "No queued memory items need manual review."])
+        console.print(Panel("\n".join(lines), title=f"Memory Next - {project_name}"))
+
+
+@memory.command("install-context")
+@click.option("--project", "-p", required=True, help="Project memory store to install.")
+@click.option(
+    "--target",
+    type=click.Path(path_type=Path),
+    default=Path("CLAUDE.md"),
+    show_default=True,
+    help="Claude Code project memory file to update.",
+)
+@click.option(
+    "--import-file",
+    "import_file",
+    type=click.Path(path_type=Path),
+    default=Path(INSTALLED_MEMORY_FILENAME),
+    show_default=True,
+    help="Imported memory file path, relative to --target when not absolute.",
+)
+def memory_install_context(project: str, target: Path, import_file: Path):
+    """Install generated agent context into a Claude Code project memory file."""
+    _install_context_files(project, target, import_file)
+
+
+def _install_context_files(project: str, target: Path, import_file: Path) -> None:
+    cfg = _load_config()
+    output_dir = Path(cfg.output.skill_output_dir).expanduser()
+    source_path = output_dir / project / AGENT_CONTEXT_FILENAME
+    store_path = output_dir / project / STORE_FILENAME
+    if not source_path.exists():
+        console.print(
+            f"[yellow]No agent context found for project '{project}'. "
+            f"Run `trace2skill dream --project {project}` first.[/]"
+        )
+        raise SystemExit(1)
+
+    target_path = target.expanduser().resolve()
+    if import_file.is_absolute():
+        import_path = import_file.expanduser().resolve()
+        import_ref = import_path.as_posix()
+    else:
+        import_path = (target_path.parent / import_file).resolve()
+        import_ref = import_file.as_posix()
+
+    import_path.parent.mkdir(parents=True, exist_ok=True)
+    installed_text = _installed_memory_text(project, source_path, store_path)
+    import_path.write_text(installed_text, encoding="utf-8")
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_claude_import(target_path, import_ref)
+
+    console.print(Panel(
+        f"Claude memory: {target_path}\n"
+        f"Imported context: {import_path}\n"
+        f"Source context: {source_path}",
+        title="Installed Trace2Skill Context",
+    ))
+
+
+@memory.command("archive")
+@click.argument("memory_id")
+@click.option("--project", "-p", required=True, help="Project memory store.")
+def memory_archive(memory_id: str, project: str):
+    """Archive a memory so it no longer enters agent context."""
+    _update_memory_status(project, memory_id, "archived")
+
+
+@memory.command("restore")
+@click.argument("memory_id")
+@click.option("--project", "-p", required=True, help="Project memory store.")
+def memory_restore(memory_id: str, project: str):
+    """Restore an archived memory to active or review state."""
+    cfg = _load_config()
+    output_dir = Path(cfg.output.skill_output_dir).expanduser()
+    store = load_memory_store(output_dir, project)
+    item = _find_memory_item(store, memory_id)
+    if not item:
+        console.print(f"[red]Memory not found: {memory_id}[/]")
+        raise SystemExit(1)
+    status = "review" if item.get("type") == "OPEN_QUESTION" or float(item.get("confidence", 0) or 0) < 0.55 else "active"
+    item["status"] = status
+    item["updated_by"] = "trace2skill memory restore"
+    item["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    refresh_memory_files(output_dir, project, store)
+    console.print(f"[green]Restored {item.get('id')} -> {status}[/]")
+
+
+@memory.command("confirm")
+@click.argument("memory_id")
+@click.option("--project", "-p", required=True, help="Project memory store.")
+@click.option("--confidence", type=float, default=0.8, show_default=True, help="Minimum confidence after confirmation.")
+def memory_confirm(memory_id: str, project: str, confidence: float):
+    """Confirm a memory and promote it into active agent context."""
+    cfg = _load_config()
+    output_dir = Path(cfg.output.skill_output_dir).expanduser()
+    store = load_memory_store(output_dir, project)
+    item = _find_memory_item(store, memory_id)
+    if not item:
+        console.print(f"[red]Memory not found: {memory_id}[/]")
+        raise SystemExit(1)
+    item["confidence"] = max(float(item.get("confidence", 0) or 0), confidence)
+    item["seen_count"] = int(item.get("seen_count", 1) or 1) + 1
+    item["status"] = "review" if item.get("type") == "OPEN_QUESTION" else "active"
+    item["confirmed"] = True
+    item["updated_by"] = "trace2skill memory confirm"
+    item["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    refresh_memory_files(output_dir, project, store)
+    console.print(f"[green]Confirmed {item.get('id')} (confidence={item['confidence']:.2f})[/]")
+
+
+@memory.command("edit")
+@click.argument("memory_id")
+@click.option("--project", "-p", required=True, help="Project memory store.")
+@click.option("--action", help="Replace the memory text.")
+@click.option("--condition", help="Replace the applies-when condition.")
+@click.option("--type", "memory_type", help="Replace the memory type.")
+@click.option("--scope", help="Replace the scope.")
+@click.option("--confidence", type=float, help="Replace the confidence score.")
+@click.option("--status", type=click.Choice(["active", "review", "archived"]), help="Replace the review status.")
+def memory_edit(
+    memory_id: str,
+    project: str,
+    action: str | None,
+    condition: str | None,
+    memory_type: str | None,
+    scope: str | None,
+    confidence: float | None,
+    status: str | None,
+):
+    """Edit a memory item without opening JSON manually."""
+    cfg = _load_config()
+    output_dir = Path(cfg.output.skill_output_dir).expanduser()
+    store = load_memory_store(output_dir, project)
+    item = _find_memory_item(store, memory_id)
+    if not item:
+        console.print(f"[red]Memory not found: {memory_id}[/]")
+        raise SystemExit(1)
+    if not any(value is not None for value in [action, condition, memory_type, scope, confidence, status]):
+        console.print("[yellow]Nothing to edit. Pass --action, --condition, --type, --scope, --confidence, or --status.[/]")
+        return
+    _edit_memory_item(
+        item,
+        action=action,
+        condition=condition,
+        memory_type=memory_type,
+        scope=scope,
+        confidence=confidence,
+        status=status,
+        updated_by="trace2skill memory edit",
+    )
+    refresh_memory_files(output_dir, project, store)
+    console.print(f"[green]Edited {item.get('id')}[/]")
+
+
+@memory.command("review")
+@click.option("--project", "-p", required=True, help="Project memory store.")
+@click.option("--limit", type=int, default=20, show_default=True, help="Maximum items to review.")
+def memory_review(project: str, limit: int):
+    """Interactively review weak memories and open questions."""
+    cfg = _load_config()
+    output_dir = Path(cfg.output.skill_output_dir).expanduser()
+    store = load_memory_store(output_dir, project)
+    queue = _memory_review_queue(store, limit)
+
+    if not queue:
+        console.print("[green]No memories need review.[/]")
+        return
+
+    changed = False
+    console.print(f"[bold]Reviewing {len(queue)} memory item(s) for {project}[/]")
+    for index, item in enumerate(queue, start=1):
+        console.print()
+        console.print(Panel(_format_memory_detail(item), title=f"{index}/{len(queue)}"))
+        choice = click.prompt(
+            "Action [a=accept, m=edit, e=archive, s=skip, q=quit]",
+            default="s",
+            show_default=True,
+        ).strip().lower()
+        if choice in {"q", "quit"}:
+            break
+        if choice in {"a", "accept", "c", "confirm"}:
+            item["confidence"] = max(float(item.get("confidence", 0) or 0), 0.8)
+            item["seen_count"] = int(item.get("seen_count", 1) or 1) + 1
+            item["status"] = "review" if item.get("type") == "OPEN_QUESTION" else "active"
+            item["confirmed"] = True
+            item["updated_by"] = "trace2skill memory review accept"
+            item["updated_at"] = datetime.now().isoformat(timespec="seconds")
+            changed = True
+            console.print(f"[green]Accepted {item.get('id')}[/]")
+        elif choice in {"m", "edit"}:
+            new_action = click.prompt("New memory text", default=item.get("action", ""), show_default=False)
+            new_condition = click.prompt("Applies when (blank keeps current)", default="", show_default=False)
+            _edit_memory_item(
+                item,
+                action=new_action,
+                condition=new_condition if new_condition else None,
+                confidence=max(float(item.get("confidence", 0) or 0), 0.8),
+                status="review" if item.get("type") == "OPEN_QUESTION" else "active",
+                confirmed=True,
+                updated_by="trace2skill memory review edit",
+            )
+            changed = True
+            console.print(f"[green]Edited {item.get('id')}[/]")
+        elif choice in {"e", "archive", "r", "reject"}:
+            item["status"] = "archived"
+            item["updated_by"] = "trace2skill memory review archive"
+            item["updated_at"] = datetime.now().isoformat(timespec="seconds")
+            changed = True
+            console.print(f"[yellow]Archived {item.get('id')}[/]")
+        elif choice in {"s", "skip", ""}:
+            console.print("[dim]Skipped[/]")
+        else:
+            console.print("[yellow]Unknown action; skipped.[/]")
+
+    if changed:
+        refresh_memory_files(output_dir, project, store)
+        console.print("[green]Memory artifacts refreshed.[/]")
+    else:
+        console.print("[dim]No changes made.[/]")
+
+
+def _update_memory_status(project: str, memory_id: str, status: str) -> None:
+    cfg = _load_config()
+    output_dir = Path(cfg.output.skill_output_dir).expanduser()
+    store = load_memory_store(output_dir, project)
+    item = _find_memory_item(store, memory_id)
+    if not item:
+        console.print(f"[red]Memory not found: {memory_id}[/]")
+        raise SystemExit(1)
+    item["status"] = status
+    item["updated_by"] = f"trace2skill memory {status}"
+    item["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    refresh_memory_files(output_dir, project, store)
+    console.print(f"[green]Set {item.get('id')} -> {status}[/]")
+
+
+def _installed_memory_text(project: str, source_path: Path, store_path: Path) -> str:
+    generated = datetime.now().isoformat(timespec="seconds")
+    body = source_path.read_text(encoding="utf-8").strip()
+    lines = [
+        f"# Trace2Skill Memory - {project}",
+        "",
+        "<!-- This file is generated by `trace2skill memory install-context`. -->",
+        f"Generated: {generated}",
+        f"Source: {source_path}",
+    ]
+    if store_path.exists():
+        lines.append(f"Store: {store_path}")
+    lines.extend([
+        "",
+        "## Agent Context",
+        "",
+        body or "_No agent-ready memories yet._",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def _ensure_claude_import(target_path: Path, import_ref: str) -> None:
+    import_line = f"{CLAUDE_IMPORT_MARKER}\n@{import_ref}"
+    if target_path.exists():
+        content = target_path.read_text(encoding="utf-8")
+        lines = content.splitlines()
+        if CLAUDE_IMPORT_MARKER in lines:
+            marker_index = lines.index(CLAUDE_IMPORT_MARKER)
+            if marker_index + 1 < len(lines) and lines[marker_index + 1].startswith("@"):
+                lines[marker_index + 1] = f"@{import_ref}"
+            else:
+                lines.insert(marker_index + 1, f"@{import_ref}")
+            target_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+            return
+        if f"@{import_ref}" in lines:
+            return
+        separator = "\n\n" if content.strip() else ""
+        target_path.write_text(
+            content.rstrip() + separator + import_line + "\n",
+            encoding="utf-8",
+        )
+        return
+
+    target_path.write_text(
+        "# Project Memory\n\n"
+        f"{import_line}\n",
+        encoding="utf-8",
+    )
+
+
+def _edit_memory_item(
+    item: dict,
+    *,
+    action: str | None = None,
+    condition: str | None = None,
+    memory_type: str | None = None,
+    scope: str | None = None,
+    confidence: float | None = None,
+    status: str | None = None,
+    confirmed: bool | None = True,
+    updated_by: str,
+) -> None:
+    if action is not None:
+        item["action"] = action
+    if condition is not None:
+        item["condition"] = condition
+    if memory_type is not None:
+        item["type"] = memory_type.strip().upper().replace("-", "_").replace(" ", "_")
+    if scope is not None:
+        item["scope"] = scope
+    if confidence is not None:
+        item["confidence"] = confidence
+    if status is not None:
+        item["status"] = status
+    if confirmed is not None:
+        item["confirmed"] = confirmed
+    item["updated_by"] = updated_by
+    item["updated_at"] = datetime.now().isoformat(timespec="seconds")
+
+
+def _find_memory_item(store: dict, memory_id: str) -> dict | None:
+    matches = [
+        item for item in store.get("items", [])
+        if str(item.get("id", "")).startswith(memory_id)
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _format_memory_detail(item: dict) -> str:
+    evidence = item.get("evidence", [])
+    lines = [
+        f"id: {item.get('id', '')}",
+        f"type: {item.get('type', '')}",
+        f"status: {item.get('status', '')}",
+        f"scope: {item.get('scope', '')}",
+        f"confidence: {float(item.get('confidence', 0) or 0):.2f}",
+        f"seen_count: {item.get('seen_count', 1)}",
+        f"first_seen: {item.get('first_seen', '')}",
+        f"last_seen: {item.get('last_seen', '')}",
+        "",
+        item.get("action", ""),
+    ]
+    if item.get("condition"):
+        lines.extend(["", f"Applies when: {item['condition']}"])
+    if evidence:
+        lines.append("")
+        lines.append("Evidence:")
+        lines.extend(f"- {entry}" for entry in evidence[:8])
+    return "\n".join(lines)
+
+
+def _memory_review_queue(store: dict, limit: int) -> list[dict]:
+    candidates = [
+        item for item in store.get("items", [])
+        if item.get("status", "active") != "archived"
+        and (
+            item.get("status") == "review"
+            or item.get("type") == "OPEN_QUESTION"
+            or float(item.get("confidence", 0) or 0) < 0.55
+            or (not item.get("evidence") and not item.get("confirmed"))
+        )
+    ]
+    candidates.sort(key=lambda item: (
+        item.get("type") != "OPEN_QUESTION",
+        float(item.get("confidence", 0) or 0),
+        item.get("action", ""),
+    ))
+    return candidates[:max(0, limit)]
+
+
+def _memory_review_reason(item: dict) -> str:
+    if item.get("conflict_with"):
+        return "conflict"
+    if item.get("type") == "OPEN_QUESTION":
+        return "open question"
+    if not item.get("evidence") and not item.get("confirmed"):
+        return "missing evidence"
+    if float(item.get("confidence", 0) or 0) < 0.55:
+        return "low confidence"
+    if item.get("status") == "review":
+        return "queued"
+    return "review"
+
+
+@cli.command(hidden=True)
+@click.option("--project", "-p", help="Show memories for one project.")
+@click.option("--type", "memory_type", help="Filter by memory type, e.g. USER_PREFERENCE.")
+@click.option("--weak", is_flag=True, help="Show only low-confidence memories.")
+@click.option("--open", "open_only", is_flag=True, help="Show only open questions.")
+def review(
+    project: str | None,
+    memory_type: str | None,
+    weak: bool,
+    open_only: bool,
+):
+    """Inspect consolidated memories and review queues."""
+    cfg = _load_config()
+    output_dir = Path(cfg.output.skill_output_dir).expanduser()
+    stores = _load_memory_stores(output_dir, project)
+
+    if not stores:
+        console.print("[yellow]No memory stores found. Run `trace2skill dream` first.[/]")
+        return
+
+    wanted_type = memory_type.upper() if memory_type else None
+    if open_only:
+        wanted_type = "OPEN_QUESTION"
+
+    rows = []
+    for project_name, store in stores:
+        for item in store.get("items", []):
+            item_type = (item.get("type") or "").upper()
+            confidence = float(item.get("confidence", 0) or 0)
+            if wanted_type and item_type != wanted_type:
+                continue
+            if weak and confidence >= 0.55:
+                continue
+            rows.append((project_name, item, confidence))
+
+    if not rows:
+        console.print("[yellow]No memories match the current filters.[/]")
+        return
+
+    rows.sort(key=lambda row: (row[0], row[1].get("type", ""), -row[2], row[1].get("action", "")))
+
+    table = Table(title="Memory Review")
+    table.add_column("Project", width=14)
+    table.add_column("Type", width=20)
+    table.add_column("Conf", justify="right", width=6)
+    table.add_column("Seen", justify="right", width=5)
+    table.add_column("Memory")
+
+    for project_name, item, confidence in rows[:80]:
+        action = item.get("action", "")
+        if len(action) > 96:
+            action = action[:93] + "..."
+        table.add_row(
+            project_name[:14],
+            _display_memory_type(item.get("type", "")),
+            f"{confidence:.2f}" if confidence else "",
+            str(item.get("seen_count", 1)),
+            action,
+        )
+
+    console.print(table)
+    if len(rows) > 80:
+        console.print(f"[dim]Showing 80/{len(rows)} memories. Narrow with --project, --type, --weak, or --open.[/]")
+
+
+def _load_memory_stores(output_dir: Path, project: str | None) -> list[tuple[str, dict]]:
+    """Load one or more project memory stores."""
+    if project:
+        store = load_memory_store(output_dir, project)
+        return [(project, store)] if store.get("items") else []
+
+    stores = []
+    if not output_dir.exists():
+        return stores
+    for store_path in sorted(output_dir.glob("*/memory_store.json")):
+        project_name = store_path.parent.name
+        store = load_memory_store(output_dir, project_name)
+        if store.get("items"):
+            stores.append((project_name, store))
+    return stores
+
+
+def _display_memory_type(memory_type: str) -> str:
+    memory_type = (memory_type or "").upper()
+    return MEMORY_TYPE_LABELS.get(memory_type, memory_type.title())
+
+
+def _memory_store_stats(store: dict) -> dict:
+    items = store.get("items", [])
+    stats = {
+        "total": len(items),
+        "agent": 0,
+        "review": 0,
+        "archived": 0,
+        "conflict": 0,
+        "missing_evidence": 0,
+        "types": {},
+    }
+    for item in items:
+        mem_type = (item.get("type") or "UNKNOWN").upper()
+        stats["types"][mem_type] = stats["types"].get(mem_type, 0) + 1
+        status = item.get("status", "active")
+        confidence = float(item.get("confidence", 0) or 0)
+        has_evidence_or_confirmation = bool(item.get("evidence") or item.get("confirmed"))
+        if status == "archived":
+            stats["archived"] += 1
+        if status == "review":
+            stats["review"] += 1
+        if item.get("conflict_with"):
+            stats["conflict"] += 1
+        if status != "archived" and not has_evidence_or_confirmation:
+            stats["missing_evidence"] += 1
+        if (
+            status == "active"
+            and item.get("type") != "OPEN_QUESTION"
+            and confidence >= 0.55
+            and has_evidence_or_confirmation
+        ):
+            stats["agent"] += 1
+    return stats
+
+
+@cli.group(hidden=True)
 def runs():
     """查看历史运行结果。"""
 
@@ -697,7 +1479,7 @@ def runs_show(run_id: str):
         console.print(llm_table)
 
 
-@cli.command()
+@cli.command(hidden=True)
 @click.option("--source", "-s", type=click.Choice(["opencode", "chrys", "codeagent", "claudecode"]), default="opencode", help="数据源")
 @click.option("--days", "-d", type=int, default=30, show_default=True, help="统计最近 N 天")
 @click.option("--project", "-p", help="按项目名称过滤（子串匹配）")

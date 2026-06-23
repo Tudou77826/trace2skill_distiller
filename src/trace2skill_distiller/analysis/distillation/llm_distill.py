@@ -23,67 +23,70 @@ from ..types import TopicCluster, TopicSkill, SkillRule
 
 logger = logging.getLogger(__name__)
 
-DISTILL_SYSTEM = """你是一个高级软件工程师，擅长从开发轨迹中提炼可直接复用的知识点。
-你的核心产出是 rules — 每条 rule 必须具体、可操作、有价值，读者可以直接拿去用。"""
+DISTILL_SYSTEM = """You are a senior memory curator for human-AI coding sessions.
+Do not skim. A session can teach many kinds of reusable memory: user preferences,
+standing requirements, repository facts, workflow patterns, knowledge discoveries,
+corrections to wrong assumptions, tool/skill feedback, pitfalls, and follow-up
+questions. Extract only memories grounded in the supplied trajectories. Prefer a
+small number of precise, evidence-backed memories over many generic tips."""
 
-DISTILL_PROMPT = """## 输入轨迹
+DISTILL_PROMPT = """## Input trajectories
 
-主题：{topic_name}
-描述：{topic_summary}
+Topic: {topic_name}
+Topic summary: {topic_summary}
 
-### 成功轨迹 (T+)
+### Successful / useful trajectories
 {t_plus}
 
-### 失败/问题轨迹 (T-)
+### Failed / partial / friction trajectories
 {t_minus}
 
-## 输出要求
+## What to extract
 
-从轨迹中提炼可直接复用的知识点，输出 JSON。
+Produce a memory set, not a generic skill article. Each memory must be specific
+enough to help the next AI assistant behave better in future sessions.
 
-### rules — 核心产出，必须认真对待
+Use these memory types:
+- USER_PREFERENCE: stable user taste, habit, wording, or interaction preference.
+- STANDING_REQUIREMENT: a rule the user repeatedly wants followed.
+- REPO_FACT: concrete project structure, command, file, API, data shape, or design constraint.
+- WORKFLOW_PATTERN: a repeatable way to investigate, implement, test, or ship.
+- KNOWLEDGE_DISCOVERY: a non-obvious technical/domain fact discovered during work.
+- CORRECTION: a mistaken assumption that was corrected.
+- TOOL_FEEDBACK: feedback about an agent skill, plugin, command, model, or tool.
+- PITFALL: something that wasted time or caused a bad result.
+- OPEN_QUESTION: useful uncertainty that should be verified later.
 
-每条 rule 是一个独立的、可直接复用的知识点。读者看到就能直接用，不需要再看其他内容。
+Quality rules:
+- Every memory needs direct evidence from the trajectories. Include the shortest
+  useful evidence quote or paraphrase in evidence_from_success or evidence_from_failure.
+- Do not write vague advice like "check the config" or "be careful". Name the file,
+  command, module, behavior, or user preference.
+- Separate durable memory from one-off facts. Put one-off facts in scope
+  "project-specific" or lower confidence.
+- If a memory is based on criticism or failed output, capture what should change next time.
+- Keep action as the reusable memory itself. Use condition only when the memory applies
+  in a specific situation.
 
-规则类型：
-- **ALWAYS**: 成功经验，总是应该这样做。action 写具体做法。
-- **WHEN_THEN**: 条件经验，满足某条件时执行某动作。condition 写触发条件，action 写具体做法。
-- **NEVER**: 失败教训，永远不要这样做。action 写不该做的事。
-- **AVOID**: 踩过的坑，尽量避免。action 写要避免的事。
-- **FACT**: 探索中发现的事实认知。action 写具体事实（文件路径、数据格式、架构关系、配置细节等）。condition 留空。
-
-rules 质量要求：
-- action 必须具体，包含可操作的细节（路径、命令、参数、代码片段等）
-- 不要写"应该检查XXX"这种空话，要写具体的路径、文件名、字段名、命令等
-- FACT 类型的 action 必须保留原始 Discoveries 中的具体细节，不要泛化、不要总结成一句话
-- 每条 FACT 只描述一个事实，不要合并多个事实
-- scope 为 project-specific 时 confidence 应相应提高
-
-### 其他字段
-
-- **skill_title**: 中文标题，简洁准确
-- **skill_type**: procedure|knowledge|checklist|troubleshooting|reference
-- **description**: 英文，格式 "[What it does]. Use when [trigger scenarios]."，限 200 字符
-- **summary**: 中文，2-3 句概述
-- **body**: 可选的补充 Markdown（如排查步骤、示例代码等）。如果 rules 已经完整则留空。
-
-### 严格输出 JSON：
+Return strict JSON:
 {{
-  "skill_title": "技能标题（中文）",
-  "skill_type": "procedure|knowledge|checklist|troubleshooting|reference",
-  "description": "English description with trigger words (max 200 chars)",
-  "summary": "中文概述（2-3 句）",
-  "rules": [
+  "skill_title": "short Chinese title for this memory topic",
+  "skill_type": "memory",
+  "description": "English trigger description, max 200 chars",
+  "summary": "Chinese summary, 1-3 sentences",
+  "memory_items": [
     {{
-      "id": "rule_xxx",
-      "type": "ALWAYS|WHEN_THEN|NEVER|AVOID|FACT",
-      "condition": "触发条件（仅 WHEN_THEN 填写，其他留空）",
-      "action": "具体的知识点内容",
-      "confidence": 0.8,
-      "scope": "general|project-specific|language-specific"
+      "id": "memory_001",
+      "type": "USER_PREFERENCE|STANDING_REQUIREMENT|REPO_FACT|WORKFLOW_PATTERN|KNOWLEDGE_DISCOVERY|CORRECTION|TOOL_FEEDBACK|PITFALL|OPEN_QUESTION",
+      "condition": "when this memory applies, or empty",
+      "action": "the concrete reusable memory",
+      "evidence_from_success": ["short evidence from successful/useful trajectories"],
+      "evidence_from_failure": ["short evidence from failed/partial/friction trajectories"],
+      "confidence": 0.0,
+      "scope": "general|project-specific|user-specific|repo-specific|tool-specific"
     }}
   ],
-  "body": "补充 Markdown（可选，可为空字符串）"
+  "body": "Optional Markdown with synthesis, contradictions, and follow-up checks"
 }}"""
 
 
@@ -130,14 +133,17 @@ class LLMDistillationStrategy:
             max_tokens=8192,
         )
 
+        raw_rules = result.get("memory_items") or result.get("rules", [])
         rules = []
-        for r in result.get("rules", []):
+        for r in raw_rules:
             rules.append(
                 SkillRule(
                     id=r.get("id", f"rule_{len(rules)}"),
                     type=r.get("type", ""),
                     condition=r.get("condition", ""),
                     action=r.get("action", ""),
+                    evidence_from_success=r.get("evidence_from_success", []),
+                    evidence_from_failure=r.get("evidence_from_failure", []),
                     confidence=r.get("confidence", 0.5),
                     scope=r.get("scope", "general"),
                 )
@@ -147,7 +153,7 @@ class LLMDistillationStrategy:
             topic_id=cluster.topic_id,
             topic_name=cluster.topic_name,
             skill_title=result.get("skill_title", cluster.topic_name),
-            skill_type=result.get("skill_type", "checklist"),
+            skill_type=result.get("skill_type", "memory"),
             description=result.get("description", ""),
             summary=result.get("summary", cluster.topic_summary),
             rules=rules,

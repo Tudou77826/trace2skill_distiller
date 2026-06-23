@@ -100,7 +100,7 @@ class OutputConfig(BaseModel):
     """Configuration for the output layer."""
     skill_output_dir: str = "~/.trace2skill/skills"
     max_rules_per_skill: int = 15
-    format: str = "skill_md"  # skill_md | knowledge_md
+    format: str = "memory_md"  # memory_md | knowledge_md | skill_md
     debug: DebugConfig = Field(default_factory=DebugConfig)
 
 
@@ -222,7 +222,7 @@ class DistillConfig(BaseModel):
             output=OutputConfig(
                 skill_output_dir=raw.get("output", {}).get("skill_output_dir") or raw.get("skill_output_dir", "~/.trace2skill/skills"),
                 max_rules_per_skill=raw.get("output", {}).get("max_rules_per_skill") or raw.get("max_rules_per_skill", 15),
-                format=raw.get("output", {}).get("format", "skill_md"),
+                format=raw.get("output", {}).get("format", "memory_md"),
                 debug=DebugConfig(
                     enabled=raw.get("output", {}).get("debug", {}).get("enabled", False),
                     output_dir=raw.get("output", {}).get("debug", {}).get("output_dir", "~/.trace2skill/debug"),
@@ -244,7 +244,7 @@ def init_default_config(
     source_type: str = "opencode",
     fast_concurrency: int = 1,
     strong_concurrency: int = 1,
-    output_format: str = "skill_md",
+    output_format: str = "memory_md",
 ) -> Path:
     """Create default config.yaml with provided credentials."""
     config_dir = Path.home() / ".trace2skill"

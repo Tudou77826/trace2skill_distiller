@@ -12,6 +12,12 @@ from ..analysis.types import TopicSkill
 from .types import DistillReport, ShapingResult
 from .formatters.skill_md import SkillMdFormatter, save_trajectories
 from .formatters.knowledge_md import write_knowledge
+from .formatters.memory_md import (
+    AGENT_CONTEXT_FILENAME,
+    REPO_FACTS_FILENAME,
+    USER_PROFILE_FILENAME,
+    write_memory,
+)
 from .state import StateManager
 
 
@@ -56,7 +62,18 @@ class DefaultOutputLayer:
         written_paths: list[Path] = []
         index_path: Path | None = None
 
-        if fmt == "knowledge_md":
+        if fmt == "memory_md":
+            index_path = write_memory(skills, output_dir, project)
+            written_paths.append(index_path)
+            project_dir = output_dir / project
+            written_paths.extend([
+                project_dir / AGENT_CONTEXT_FILENAME,
+                project_dir / USER_PROFILE_FILENAME,
+                project_dir / REPO_FACTS_FILENAME,
+            ])
+            console.print(f"  Memory: {index_path}")
+            console.print(f"  Agent context: {project_dir / AGENT_CONTEXT_FILENAME}")
+        elif fmt == "knowledge_md":
             index_path = write_knowledge(skills, output_dir, project)
             written_paths.append(index_path)
             console.print(f"  Knowledge: {index_path}")

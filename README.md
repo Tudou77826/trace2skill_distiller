@@ -2,7 +2,37 @@
 
 **从 AI 编程会话中自动提炼可复用的技能知识。**
 
-分析你的 AI 编程会话记录（支持 [OpenCode](https://github.com/opencode-ai/opencode)、Chrys、[CodeAgent](https://github.com/NgAgent/codeagent)、[Claude Code](https://claude.ai/code)），用 LLM 提取可操作的实践经验和技能规则，写入 `SKILL.md` 供 AI 编程助手自动发现和复用。
+## 免安装 GUI 版（推荐普通用户）
+
+面向普通用户的推荐形态是 `trace2skill-gui.exe`：双击后启动本地 Web GUI，在浏览器里选择历史 Agent 会话并提取长期记忆，**不要求安装 Python 或运行任何命令**。
+
+### 下载使用
+
+1. 打开 [GitHub Releases](https://github.com/Tudou77826/trace2skill_distiller/releases) 页面
+2. 在最新版本的 Assets 里下载 **`trace2skill-gui.exe`**
+3. 双击运行，浏览器会自动打开本地界面（默认 `http://127.0.0.1:8765`）
+4. 在界面里勾选有价值的会话，点击「提取所选会话」即可生成长期记忆
+
+> 首次使用前，需要先准备好 `~/.trace2skill/config.yaml` 和 `.env`（API Key、模型等）。如果还没配置，可以让有经验的用户先通过下面的命令行版本跑一次 `trace2skill init`。
+
+### 开发者本地构建
+
+```bash
+uv run python build_exe.py --gui      # 构建免安装 GUI 版（one-file exe）
+uv run python build_exe.py --cli      # 构建高级命令行版本（onedir）
+uv run python build_exe.py --all      # 两者都构建
+```
+
+构建产物：
+
+```text
+dist/trace2skill-gui.exe       # GUI 版（单文件，双击即用）
+dist/trace2skill/trace2skill.exe   # CLI 版（命令行，需要目录）
+```
+
+---
+
+Trace2Skill Distiller 分析你的 AI 编程会话记录（支持 [OpenCode](https://github.com/opencode-ai/opencode)、Chrys、[CodeAgent](https://github.com/NgAgent/codeagent)、[Claude Code](https://claude.ai/code)），用 LLM 提取可操作的实践经验和技能规则，写入 `SKILL.md` 供 AI 编程助手自动发现和复用。
 
 ## 设计理念
 
@@ -111,7 +141,7 @@ OpenCode / Chrys / CodeAgent / Claude Code 会话历史
 从 [GitHub Releases](https://github.com/Tudou77826/trace2skill_distiller/releases) 下载最新 `.whl` 文件：
 
 ```bash
-pip install trace2skill_distiller-0.1.0-py3-none-any.whl
+pip install trace2skill_distiller-0.3.0-py3-none-any.whl
 trace2skill init
 ```
 

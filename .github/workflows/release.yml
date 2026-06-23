@@ -22,16 +22,20 @@ jobs:
           pip install -e ".[dev]" 2>$null || pip install -e .
           pip install pyinstaller
 
-      - name: Build exe
-        run: python build_exe.py
+      - name: Build GUI one-file exe
+        run: python build_exe.py --gui
 
-      - name: Zip dist folder
+      - name: Verify GUI artifact exists
         shell: pwsh
         run: |
-          $tag = "${{ github.event.release.tag_name }}"
-          Compress-Archive -Path dist/trace2skill/* -DestinationPath "trace2skill-${tag}-win64.zip"
+          if (-not (Test-Path "dist/trace2skill-gui.exe")) {
+            Write-Error "trace2skill-gui.exe not found in dist/"
+            exit 1
+          }
+          $size = [math]::Round((Get-Item "dist/trace2skill-gui.exe").Length / 1MB, 1)
+          Write-Host "Built trace2skill-gui.exe ($size MB)"
 
-      - name: Upload to Release
+      - name: Upload GUI exe to Release
         uses: softprops/action-gh-release@v2
         with:
-          files: trace2skill-*-win64.zip
+          files: dist/trace2skill-gui.exe
