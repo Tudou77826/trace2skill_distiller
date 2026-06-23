@@ -127,6 +127,10 @@ class DistillConfig(BaseModel):
     output: OutputConfig = Field(default_factory=OutputConfig)
 
     @staticmethod
+    def env_file_path() -> Path:
+        return Path.home() / ".trace2skill" / ".env"
+
+    @staticmethod
     def default_config_path() -> Path:
         return Path.home() / ".trace2skill" / "config.yaml"
 
@@ -321,6 +325,32 @@ def init_default_config(
         f.write(f"TRACE2SKILL_BASE_URL={base_url}\n")
 
     return config_path
+
+
+def load_dotenv(path: Optional[Path] = None) -> None:
+    """Load TRACE2SKILL_* vars from ~/.trace2skill/.env into os.environ.
+
+    Only TRACE2SKILL_-prefixed keys are loaded, so the file cannot leak
+    unrelated environment overrides. Values are never overwritten when the
+    variable is already set in the real environment.
+    """
+    env_file = path or DistillConfig.env_file_path()
+    if not env_file.exists():
+        return
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if key.startswith("TRACE2SKILL_"):
+            os.environ.setdefault(key, val.strip())
+
+
+def load_config(path: Optional[Path] = None) -> DistillConfig:
+    """Load config, sourcing the .env file first (shared by CLI and GUI)."""
+    load_dotenv()
+    return DistillConfig.load(path)
 
 
 # Mapping: dotted key -> (YAML path segments, type converter)

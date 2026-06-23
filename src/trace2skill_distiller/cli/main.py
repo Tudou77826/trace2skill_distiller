@@ -14,7 +14,7 @@ import click
 from rich.panel import Panel
 from rich.table import Table
 
-from ..core.config import DistillConfig, LLMConfig, init_default_config, set_config_value
+from ..core.config import DistillConfig, LLMConfig, init_default_config, load_config, set_config_value
 from ..core.console import console
 from ..llm import LLMClient
 from ..llm.providers.openai_compatible import OpenAICompatibleProvider
@@ -48,15 +48,7 @@ def _setup_logging() -> None:
 
 def _load_config() -> DistillConfig:
     """Load config, ensuring .env is sourced if present."""
-    env_file = Path.home() / ".trace2skill" / ".env"
-    if env_file.exists():
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            if "=" in line and not line.startswith("#"):
-                key, _, val = line.partition("=")
-                key = key.strip()
-                if key.startswith("TRACE2SKILL_"):
-                    os.environ[key] = val.strip()
-    return DistillConfig.load()
+    return load_config()
 
 
 def _mask(s: str | None, visible: int = 4) -> str:
