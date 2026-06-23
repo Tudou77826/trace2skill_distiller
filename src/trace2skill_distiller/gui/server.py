@@ -30,6 +30,8 @@ from ..output.formatters.memory_md import (
 def run_gui(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = False) -> str:
     """Start the local GUI server and block until interrupted."""
     server = ThreadingHTTPServer((host, port), _make_handler())
+    # Let request handlers trigger a clean shutdown from the /api/quit endpoint.
+    _shutdown_holder["fn"] = server.shutdown
     url = f"http://{host}:{server.server_port}"
     if open_browser:
         threading.Timer(0.35, lambda: webbrowser.open(url)).start()
@@ -38,6 +40,9 @@ def run_gui(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = Fals
     finally:
         server.server_close()
     return url
+
+
+_shutdown_holder: dict[str, Any] = {"fn": lambda: None}
 
 
 def session_rows(cfg: DistillConfig, project: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
@@ -282,6 +287,13 @@ def _make_handler():
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if parsed.path == "/api/quit":
+                # Acknowledge, then shut the server down from another thread so
+                # this response is flushed first. This lets users cleanly exit
+                # the no-console exe instead of leaving an orphan process.
+                self._send_json({"ok": True})
+                threading.Timer(0.25, _shutdown_holder["fn"]).start()
+                return
             if parsed.path == "/api/config":
                 payload = self._read_json()
                 try:
@@ -506,12 +518,7 @@ _HTML = r"""<!doctype html>
     h1 { margin: 0; font-size: 28px; font-weight: 700; letter-spacing: 0; }
     .sub { margin-top: 6px; color: var(--muted); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; }
     main {
-      display: grid;
-      grid-template-columns: minmax(340px, 1.1fr) minmax(380px, .9fr);
-      gap: 18px;
       padding: 18px;
-      max-width: 1480px;
-      margin: 0 auto;
     }
     section {
       background: rgba(255,255,255,.90);
@@ -583,6 +590,17 @@ _HTML = r"""<!doctype html>
     .item { border-left: 4px solid var(--accent-2); background: #fff8f0; padding: 10px 12px; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; }
     .item small { display: block; color: var(--muted); margin-bottom: 3px; }
     .status { min-height: 22px; color: var(--muted); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; }
+    .status.busy { color: var(--accent); font-weight: 600; }
+    .spinner {
+      display: inline-block; width: 13px; height: 13px;
+      margin-right: 7px; vertical-align: -2px;
+      border: 2px solid var(--line);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    button:disabled .spinner { border-top-color: #888; }
     .tabs { display: flex; gap: 8px; margin-left: auto; }
     .tab {
       font-family: ui-sans-serif, system-ui, sans-serif;
@@ -591,8 +609,16 @@ _HTML = r"""<!doctype html>
       border: 1px solid var(--line); background: white; color: var(--muted);
     }
     .tab.active { background: var(--ink); color: white; border-color: var(--ink); }
+    #quitBtn { color: var(--warn); border-color: var(--line); }
+    #quitBtn:hover { background: var(--warn); color: white; border-color: var(--warn); }
     .panel { display: none; }
-    .panel.active { display: block; }
+    .panel.active {
+      display: grid;
+      grid-template-columns: minmax(340px, 1.1fr) minmax(380px, .9fr);
+      gap: 18px;
+      max-width: 1480px;
+      margin: 0 auto;
+    }
     form.settings { display: grid; gap: 18px; padding: 18px; font-family: ui-sans-serif, system-ui, sans-serif; }
     .field { display: grid; grid-template-columns: 200px 1fr; gap: 12px; align-items: center; }
     .field label { color: var(--muted); font-size: 13px; }
@@ -603,7 +629,8 @@ _HTML = r"""<!doctype html>
     .field .hint { color: var(--muted); font-size: 12px; }
     .group-title { grid-column: 1 / -1; font-size: 16px; font-weight: 700; padding-top: 10px; border-top: 1px solid var(--line); }
     .settings .bar { grid-column: 1 / -1; }
-    @media (max-width: 980px) { main { grid-template-columns: 1fr; } .table-wrap { max-height: none; } .field { grid-template-columns: 1fr; } }
+    #settingsPanel.active { grid-template-columns: 1fr; max-width: 920px; }
+    @media (max-width: 980px) { .panel.active { grid-template-columns: 1fr; } .table-wrap { max-height: none; } .field { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -616,6 +643,7 @@ _HTML = r"""<!doctype html>
       <div class="tabs">
         <button class="tab active" id="tabExtract">记忆整理</button>
         <button class="tab" id="tabSettings">设置</button>
+        <button class="tab" id="quitBtn" title="关闭后台服务并退出程序">✕ 退出</button>
       </div>
     </div>
   </header>
@@ -631,7 +659,7 @@ _HTML = r"""<!doctype html>
           <input id="project" type="text" placeholder="项目筛选" />
           <input id="limit" type="number" min="1" value="80" />
           <button class="secondary" id="load">加载</button>
-          <button id="dream">提取所选会话</button>
+          <button id="dream"><span class="spinner" style="display:none" id="dreamSpin"></span>提取所选会话</button>
         </div>
       </div>
       <div class="table-wrap">
@@ -892,14 +920,37 @@ _HTML = r"""<!doctype html>
       }
     }
 
+    let dreamTimer = null;
+    function setBusy(busy, startMsg) {
+      $("dream").disabled = busy;
+      $("dreamSpin").style.display = busy ? "inline-block" : "none";
+      $("status").classList.toggle("busy", busy);
+      if (busy) {
+        if (dreamTimer) clearInterval(dreamTimer);
+        const startedAt = Date.now();
+        const stages = ["读取会话…", "预处理与压缩…", "主题聚类…", "技能蒸馏（调用强模型）…", "写入记忆…"];
+        let stage = 0;
+        const tick = () => {
+          const secs = Math.floor((Date.now() - startedAt) / 1000);
+          const label = stages[Math.min(stage, stages.length - 1)];
+          $("status").innerHTML = `<span class="spinner"></span>正在从 ${selectedIds().length} 个会话提取记忆（${label} ${secs}s）`;
+          if (secs > 0 && secs % 12 === 0 && stage < stages.length - 1) stage++;
+        };
+        tick();
+        dreamTimer = setInterval(tick, 1000);
+      } else if (dreamTimer) {
+        clearInterval(dreamTimer);
+        dreamTimer = null;
+      }
+    }
+
     async function runDream() {
       const ids = selectedIds();
       if (!ids.length) {
         $("status").textContent = "请至少选择一个会话。";
         return;
       }
-      $("dream").disabled = true;
-      $("status").textContent = `正在从 ${ids.length} 个所选会话中提取记忆...`;
+      setBusy(true);
       try {
         const project = $("project").value.trim() || currentProject || "general";
         const data = await api("/api/dream", {
@@ -908,12 +959,12 @@ _HTML = r"""<!doctype html>
           body: JSON.stringify({project, session_ids: ids})
         });
         currentProject = data.project;
+        setBusy(false);
         $("status").textContent = `运行 ${data.run_id}：处理 ${data.sessions} 个会话，发现 ${data.topics} 个主题，提取 ${data.rules} 条记忆。`;
         renderMemory(data.memory);
       } catch (err) {
+        setBusy(false);
         $("status").textContent = err.message;
-      } finally {
-        $("dream").disabled = false;
       }
     }
 
@@ -942,10 +993,22 @@ _HTML = r"""<!doctype html>
         : `<div class="item">暂无待复审内容。</div>`;
     }
 
+    async function quitApp() {
+      $("quitBtn").disabled = true;
+      try {
+        await fetch("/api/quit", {method: "POST"});
+      } catch (_) { /* server is shutting down — expected */ }
+      document.body.innerHTML =
+        '<div style="font-family:ui-sans-serif,system-ui,sans-serif;padding:60px;text-align:center;color:#60706c;">' +
+        '<h2 style="color:#18211f;">程序已关闭，可以关闭这个标签页。</h2>' +
+        '<p>需要再次使用时，双击 trace2skill-gui.exe 即可。</p></div>';
+    }
+
     $("load").addEventListener("click", loadSessions);
     $("dream").addEventListener("click", runDream);
     $("refresh").addEventListener("click", refreshMemory);
     $("saveSettings").addEventListener("click", saveSettings);
+    $("quitBtn").addEventListener("click", quitApp);
     $("tabExtract").addEventListener("click", () => showPanel("extract"));
     $("tabSettings").addEventListener("click", () => showPanel("settings"));
     loadConfig().then(loadSessions).catch(err => $("status").textContent = err.message);
