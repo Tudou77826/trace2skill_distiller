@@ -118,31 +118,6 @@ def _iter_reports() -> list[tuple[Path, DistillReport]]:
     return reports
 
 
-def _resolve_output_format(output_format: str) -> str:
-    """Map user-facing output choices to internal formatter ids."""
-    mapping = {
-        "memory": "memory_md",
-        "memory_md": "memory_md",
-        "knowledge": "knowledge_md",
-        "knowledge_md": "knowledge_md",
-        "skill": "skill_md",
-        "skill_md": "skill_md",
-    }
-    if output_format not in mapping:
-        raise ValueError(f"Unknown output format: {output_format}")
-    return mapping[output_format]
-
-
-def _display_output_format(output_format: str) -> str:
-    """Map internal formatter ids to user-facing labels."""
-    mapping = {
-        "memory_md": "memory",
-        "knowledge_md": "knowledge",
-        "skill_md": "skill",
-    }
-    return mapping.get(output_format, output_format)
-
-
 def _fmt_timestamp(ts: int) -> str:
     """Format source timestamps safely (handles both seconds and milliseconds)."""
     if not ts:
@@ -207,13 +182,6 @@ def gui(host: str, port: int, open_browser: bool):
 @click.option("--strong-model", prompt="强力模型", default="openai/gpt-oss-120b", help="强力模型（用于蒸馏）")
 @click.option("--fast-concurrency", type=int, prompt="快速模型并发数", default=1, help="快速模型并发请求数")
 @click.option("--strong-concurrency", type=int, prompt="强力模型并发数", default=1, help="强力模型并发请求数")
-@click.option(
-    "--output-format",
-    type=click.Choice(["memory_md", "knowledge_md", "skill_md"], case_sensitive=False),
-    prompt="输出格式",
-    default="memory_md",
-    help="技能输出格式",
-)
 @click.option("--proxy", default="", help="代理地址（如 socks5://127.0.0.1:1080）")
 @click.option("--proxy-bypass", default="", help="不走代理的 host 正则，逗号分隔")
 @click.option("--verify-ssl/--no-verify-ssl", default=False, help="是否验证 SSL 证书")
@@ -227,7 +195,6 @@ def init(
     strong_model: str,
     fast_concurrency: int,
     strong_concurrency: int,
-    output_format: str,
     proxy: str,
     proxy_bypass: str,
     verify_ssl: bool,
@@ -248,15 +215,13 @@ def init(
         source_type=source.lower(),
         fast_concurrency=fast_concurrency,
         strong_concurrency=strong_concurrency,
-        output_format=output_format.lower(),
     )
     console.print(Panel(
         f"Config created: {path}\n"
         f"API key saved to: {path.parent / '.env'}\n"
         f"Source: {source}\n"
         f"Fast model: {fast_model} (concurrency={fast_concurrency})\n"
-        f"Strong model: {strong_model} (concurrency={strong_concurrency})\n"
-        f"Output format: {output_format}",
+        f"Strong model: {strong_model} (concurrency={strong_concurrency})",
         title="Trace2Skill Initialized",
     ))
 
@@ -286,7 +251,7 @@ def doctor():
     checks.append(("strong_model.model", "ok" if cfg.strong_model.model else "missing", cfg.strong_model.model or "(not set)"))
     checks.append(("fast_model.max_concurrency", "ok", str(cfg.fast_model.max_concurrency)))
     checks.append(("strong_model.max_concurrency", "ok", str(cfg.strong_model.max_concurrency)))
-    checks.append(("output.format", "ok", _display_output_format(cfg.output.format)))
+    checks.append(("output.skill_output_dir", "ok", cfg.output.skill_output_dir or "(not set)"))
 
     try:
         create_source(cfg.source)
@@ -338,8 +303,10 @@ def config_show():
     ))
     console.print()
     console.print(Panel(
-        f"output.format: {_display_output_format(cfg.output.format)}\n"
         f"output.skill_output_dir: {cfg.output.skill_output_dir}\n"
+        f"output.agent_context_path: {cfg.output.agent_context_path or '(default)'}\n"
+        f"output.user_profile_path: {cfg.output.user_profile_path or '(default)'}\n"
+        f"output.repo_facts_path: {cfg.output.repo_facts_path or '(default)'}\n"
         f"filter.min_messages: {cfg.filter.min_messages}\n"
         f"filter.min_tools: {cfg.filter.min_tools}\n"
         f"analysis.clustering_max_topics: {cfg.analysis.clustering_max_topics}",
@@ -353,10 +320,8 @@ def config_show():
 def config_set(key: str, value: str):
     """设置单个配置项。"""
     try:
-        normalized = _resolve_output_format(value.lower()) if key == "output.format" else value
-        set_config_value(key, normalized)
-        shown = _display_output_format(normalized) if key == "output.format" else normalized
-        console.print(f"[green]Set {key} = {shown}[/]")
+        set_config_value(key, value)
+        console.print(f"[green]Set {key} = {value}[/]")
     except ValueError as exc:
         console.print(f"[red]{exc}[/]")
         raise SystemExit(1)
@@ -596,14 +561,6 @@ def inspect_run(run_id: str):
     show_default=True,
     help="执行到哪个阶段",
 )
-@click.option(
-    "--output",
-    "output_format",
-    type=click.Choice(["memory", "knowledge", "skill"], case_sensitive=False),
-    default="memory",
-    show_default=True,
-    help="输出格式",
-)
 @click.option("--preview", is_flag=True, help="只预览，不写任何文件或状态")
 @click.option("--limit", type=int, default=None, help="最多处理最近 N 个会话")
 @click.option("--incremental", is_flag=True, help="跳过已经处理过的会话")
@@ -611,7 +568,6 @@ def run(
     project: str | None,
     session_id: str | None,
     mode: str,
-    output_format: str,
     preview: bool,
     limit: int | None,
     incremental: bool,
@@ -621,7 +577,6 @@ def run(
         project=project,
         session_id=session_id,
         mode=mode.lower(),
-        output_format=output_format.lower(),
         preview=preview,
         max_sessions=limit,
         incremental=incremental,
@@ -669,7 +624,6 @@ def dream(
         project=project,
         session_id=session_id,
         mode="full",
-        output_format="memory",
         preview=preview,
         max_sessions=limit,
         incremental=not include_all,
@@ -686,7 +640,6 @@ def _run_pipeline_command(
     project: str | None,
     session_id: str | None,
     mode: str,
-    output_format: str,
     preview: bool,
     max_sessions: int | None,
     incremental: bool,
@@ -697,7 +650,6 @@ def _run_pipeline_command(
         raise click.UsageError("`--project` and `--session` cannot be used together.")
 
     cfg = _load_config()
-    cfg.output.format = _resolve_output_format(output_format.lower())
 
     # Determine effective display values
     if session_id:
@@ -712,8 +664,7 @@ def _run_pipeline_command(
         f"Mode: {mode}\n"
         f"Preview: {preview}\n"
         f"Limit: {max_sessions or '(none)'}\n"
-        f"Incremental: {incremental}\n"
-        f"Output: {_display_output_format(cfg.output.format)}",
+        f"Incremental: {incremental}",
         title=title,
     ))
 
@@ -1338,7 +1289,7 @@ def _load_memory_stores(output_dir: Path, project: str | None) -> list[tuple[str
     stores = []
     if not output_dir.exists():
         return stores
-    for store_path in sorted(output_dir.glob("*/memory_store.json")):
+    for store_path in sorted(output_dir.glob(f"*/{STORE_FILENAME}")):
         project_name = store_path.parent.name
         store = load_memory_store(output_dir, project_name)
         if store.get("items"):

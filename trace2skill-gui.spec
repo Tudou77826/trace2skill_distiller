@@ -1,9 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
+"""PyInstaller spec for the trace2skill-gui single executable.
+
+The exe is dual-purpose: no args opens the PySide6 desktop window; CLI args
+delegate to the trace2skill Click group. ``console=True`` so CLI output is
+visible (the GUI window is unaffected).
+"""
+
 import importlib.util
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 block_cipher = None
 
+# rich._unicode_data submodules (lazy-loaded by rich).
 _rich_unicode_data = []
 _spec = importlib.util.find_spec('rich._unicode_data')
 if _spec and _spec.submodule_search_locations:
@@ -11,11 +20,16 @@ if _spec and _spec.submodule_search_locations:
         if p.stem != '__init__':
             _rich_unicode_data.append(f'rich._unicode_data.{p.stem}')
 
+# PySide6 needs its plugins (platforms, styles, imageformats, ...) collected
+# as binaries/datas in addition to the pure-python submodules.
+_pyside_datas, _pyside_bins, _pyside_hidden = collect_all('PySide6')
+_shiboken_datas, _shiboken_bins, _shiboken_hidden = collect_all('shiboken6')
+
 a = Analysis(
     ['gui_entrypoint.py'],
     pathex=['src'],
-    binaries=[],
-    datas=[],
+    binaries=_pyside_bins + _shiboken_bins,
+    datas=_pyside_datas + _shiboken_datas,
     hiddenimports=[
         'click',
         'openai',
@@ -38,15 +52,16 @@ a = Analysis(
         *_rich_unicode_data,
         'markdown_it',
         'mdurl',
-        'schedule',
         'sqlite3',
         'json',
         'pathlib',
         'typing_extensions',
-        'http.server',
-        'webbrowser',
-        'socket',
-        'threading',
+        # PySide6
+        *_pyside_hidden,
+        *_shiboken_hidden,
+        'PySide6.QtWidgets',
+        'PySide6.QtGui',
+        'PySide6.QtCore',
     ],
     hookspath=[],
     hooksconfig={},
@@ -75,7 +90,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

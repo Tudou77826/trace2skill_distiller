@@ -140,7 +140,7 @@ Useful evaluation checks:
 4. Render a consolidated `memory.md` with evidence and a review queue.
 5. Maintain `memory_store.json` as the canonical persistent memory store.
 6. Generate `agent-context.md`, `user-profile.md`, and `repo-facts.md` from the canonical store.
-7. Keep `skill_md` and `knowledge_md` as optional formats.
+7. ~~Keep `skill_md` and `knowledge_md` as optional formats.~~ — **Removed.** Only `memory_md` is supported now; the other two formatters were dropped to focus on a single, fully-designed review output. The three derived `.md` files (`agent-context.md` / `user-profile.md` / `repo-facts.md`) now accept user-configurable destination paths and append to an already-existing target file.
 8. Add tests for output format routing, the `dream` command, context export, review filtering, and memory rendering.
 9. Add confidence decay and confirmation counts for repeated memories.
 10. Add non-interactive memory governance commands for showing, editing, archiving, restoring, and confirming memory items.

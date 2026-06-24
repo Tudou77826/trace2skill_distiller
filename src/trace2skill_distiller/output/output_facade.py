@@ -10,8 +10,7 @@ from ..core.console import console
 from ..mining.types import TrajectorySummary
 from ..analysis.types import TopicSkill
 from .types import DistillReport, ShapingResult
-from .formatters.skill_md import SkillMdFormatter, save_trajectories
-from .formatters.knowledge_md import write_knowledge
+from .formatters.trajectories import save_trajectories
 from .formatters.memory_md import (
     AGENT_CONTEXT_FILENAME,
     REPO_FACTS_FILENAME,
@@ -36,17 +35,21 @@ class OutputLayer(Protocol):
 
 
 class DefaultOutputLayer:
-    """Default output layer using pluggable formatter and presenter."""
+    """Default output layer writing the memory_md review format.
+
+    The pipeline only supports the memory_md format now. The three derived
+    .md files (agent-context / user-profile / repo-facts) honor per-file
+    destination paths from OutputConfig and append to an existing file when
+    one is configured.
+    """
 
     def __init__(
         self,
-        formatter: SkillMdFormatter | None = None,
-        state: StateManager | None = None,
         config: OutputConfig | None = None,
+        state: StateManager | None = None,
     ):
-        self._formatter = formatter or SkillMdFormatter()
-        self._state = state or StateManager()
         self._config = config or OutputConfig()
+        self._state = state or StateManager()
 
     def output(
         self,
@@ -56,34 +59,25 @@ class DefaultOutputLayer:
         project: str,
     ) -> ShapingResult:
         output_dir = Path(self._config.skill_output_dir).expanduser()
-        fmt = self._config.format
+        cfg = self._config
 
-        # Run selected formatter
-        written_paths: list[Path] = []
-        index_path: Path | None = None
-
-        if fmt == "memory_md":
-            index_path = write_memory(skills, output_dir, project)
-            written_paths.append(index_path)
-            project_dir = output_dir / project
-            written_paths.extend([
-                project_dir / AGENT_CONTEXT_FILENAME,
-                project_dir / USER_PROFILE_FILENAME,
-                project_dir / REPO_FACTS_FILENAME,
-            ])
-            console.print(f"  Memory: {index_path}")
-            console.print(f"  Agent context: {project_dir / AGENT_CONTEXT_FILENAME}")
-        elif fmt == "knowledge_md":
-            index_path = write_knowledge(skills, output_dir, project)
-            written_paths.append(index_path)
-            console.print(f"  Knowledge: {index_path}")
-        else:
-            for skill in skills:
-                path = self._formatter.write_or_merge(skill, output_dir, project)
-                written_paths.append(path)
-                console.print(f"  Written: {path}")
-            index_path = self._formatter.write_index(skills, output_dir, project)
-            console.print(f"  Index: {index_path}")
+        index_path = write_memory(
+            skills,
+            output_dir,
+            project,
+            agent_context_path=cfg.agent_context_path,
+            user_profile_path=cfg.user_profile_path,
+            repo_facts_path=cfg.repo_facts_path,
+        )
+        written_paths: list[Path] = [index_path]
+        project_dir = output_dir / project
+        written_paths.extend([
+            project_dir / AGENT_CONTEXT_FILENAME,
+            project_dir / USER_PROFILE_FILENAME,
+            project_dir / REPO_FACTS_FILENAME,
+        ])
+        console.print(f"  Memory: {index_path}")
+        console.print(f"  Agent context: {project_dir / AGENT_CONTEXT_FILENAME}")
 
         # Save trajectories
         save_trajectories(trajectories, output_dir, project)

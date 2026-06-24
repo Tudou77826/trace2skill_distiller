@@ -28,7 +28,7 @@ def _make_config() -> DistillConfig:
         fast_model=LLMConfig(model="fast-m", api_key="sk-secret-key-12345", base_url="https://api.fast", max_concurrency=3),
         strong_model=LLMConfig(model="strong-m", api_key="sk-secret-key-12345", base_url="https://api.strong", max_concurrency=2),
         source=SourceConfig(type="chrys", chrys=ChrysConfig(sessions_dir="D:/sessions")),
-        output=OutputConfig(format="knowledge_md", skill_output_dir="D:/skills"),
+        output=OutputConfig(skill_output_dir="D:/skills"),
         filter=DistillFilter(min_messages=5, min_tools=3),
     )
 
@@ -60,7 +60,7 @@ class TestConfigShow:
             assert "type: chrys" in result.output
             assert "max_concurrency: 3" in result.output
             assert "max_concurrency: 2" in result.output
-            assert "output.format: knowledge" in result.output
+            assert "output.skill_output_dir: D:/skills" in result.output
             assert "sk-se****key-12345" in result.output or "sk-s*" in result.output
 
 
@@ -81,17 +81,17 @@ class TestConfigSet:
             if f.exists():
                 f.unlink()
 
-    def test_set_output_format_maps_user_value(self, tmp_path):
+    def test_set_writes_custom_output_path(self, tmp_path):
         f = tmp_path / "config.yaml"
         try:
-            f.write_text(yaml.dump({"output": {"format": "skill_md"}}), encoding="utf-8")
+            f.write_text(yaml.dump({"output": {"skill_output_dir": "D:/skills"}}), encoding="utf-8")
             orig = DistillConfig.default_config_path
             DistillConfig.default_config_path = staticmethod(lambda: f)
             runner = CliRunner()
-            result = runner.invoke(cli, ["config", "set", "output.format", "knowledge"])
+            result = runner.invoke(cli, ["config", "set", "output.agent_context_path", "D:/notes/context.md"])
             assert result.exit_code == 0
             data = yaml.safe_load(f.read_text(encoding="utf-8"))
-            assert data["output"]["format"] == "knowledge_md"
+            assert data["output"]["agent_context_path"] == "D:/notes/context.md"
         finally:
             DistillConfig.default_config_path = orig
             if f.exists():
@@ -130,10 +130,9 @@ class TestRun:
             runner = CliRunner()
             result = runner.invoke(
                 cli,
-                ["run", "--project", "demo", "--mode", "analyze", "--output", "knowledge", "--preview"],
+                ["run", "--project", "demo", "--mode", "analyze", "--preview"],
             )
             assert result.exit_code == 0
-            assert cfg.output.format == "knowledge_md"
             from_config.assert_called_once_with(cfg)
             mock_pipeline.run.assert_called_once_with(
                 project="demo",
@@ -154,7 +153,6 @@ class TestRun:
             result = runner.invoke(cli, ["dream", "--project", "demo", "--preview"])
             assert result.exit_code == 0
             assert "Dream Review" in result.output
-            assert cfg.output.format == "memory_md"
             mock_pipeline.run.assert_called_once_with(
                 project="demo",
                 session_id=None,

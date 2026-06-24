@@ -100,7 +100,14 @@ class OutputConfig(BaseModel):
     """Configuration for the output layer."""
     skill_output_dir: str = "~/.trace2skill/skills"
     max_rules_per_skill: int = 15
-    format: str = "memory_md"  # memory_md | knowledge_md | skill_md
+    # Optional user-configurable destination paths for the three derived .md files.
+    # Empty string = default location (<skill_output_dir>/<project>/<fixed name>).
+    # A non-empty path may point to an already existing .md file; in that case the
+    # freshly distilled memories are *appended* to it instead of overwriting it.
+    # Supports `~` and a `{project}` placeholder.
+    agent_context_path: str = ""
+    user_profile_path: str = ""
+    repo_facts_path: str = ""
     debug: DebugConfig = Field(default_factory=DebugConfig)
 
 
@@ -226,7 +233,9 @@ class DistillConfig(BaseModel):
             output=OutputConfig(
                 skill_output_dir=raw.get("output", {}).get("skill_output_dir") or raw.get("skill_output_dir", "~/.trace2skill/skills"),
                 max_rules_per_skill=raw.get("output", {}).get("max_rules_per_skill") or raw.get("max_rules_per_skill", 15),
-                format=raw.get("output", {}).get("format", "memory_md"),
+                agent_context_path=raw.get("output", {}).get("agent_context_path", ""),
+                user_profile_path=raw.get("output", {}).get("user_profile_path", ""),
+                repo_facts_path=raw.get("output", {}).get("repo_facts_path", ""),
                 debug=DebugConfig(
                     enabled=raw.get("output", {}).get("debug", {}).get("enabled", False),
                     output_dir=raw.get("output", {}).get("debug", {}).get("output_dir", "~/.trace2skill/debug"),
@@ -248,7 +257,6 @@ def init_default_config(
     source_type: str = "opencode",
     fast_concurrency: int = 1,
     strong_concurrency: int = 1,
-    output_format: str = "memory_md",
 ) -> Path:
     """Create default config.yaml with provided credentials."""
     config_dir = Path.home() / ".trace2skill"
@@ -305,9 +313,6 @@ def init_default_config(
         "filter": {
             "min_messages": 5,
             "min_tools": 3,
-        },
-        "output": {
-            "format": output_format,
         },
         "scheduler": {
             "enabled": False,
@@ -388,8 +393,10 @@ _CONFIG_KEY_MAP: dict[str, tuple[list[str], type]] = {
     "filter.min_messages": (["filter", "min_messages"], int),
     "filter.min_tools": (["filter", "min_tools"], int),
     "analysis.clustering_max_topics": (["clustering_max_topics"], int),
-    "output.format": (["output", "format"], str),
     "output.skill_output_dir": (["output", "skill_output_dir"], str),
+    "output.agent_context_path": (["output", "agent_context_path"], str),
+    "output.user_profile_path": (["output", "user_profile_path"], str),
+    "output.repo_facts_path": (["output", "repo_facts_path"], str),
     "output.max_rules_per_skill": (["output", "max_rules_per_skill"], int),
     "output.debug.enabled": (["output", "debug", "enabled"], bool),
     "output.debug.output_dir": (["output", "debug", "output_dir"], str),

@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -e ".[dev]" 2>$null || pip install -e .
-          pip install pyinstaller
+          pip install pyinstaller PySide6
 
       - name: Build GUI one-file exe
         run: python build_exe.py --gui
@@ -32,6 +32,8 @@ jobs:
             Write-Error "trace2skill-gui.exe not found in dist/"
             exit 1
           }
+          # Smoke-test: no args should not crash on import (it will try to open a
+          # window on the runner; we only assert the binary starts and exits).
           $size = [math]::Round((Get-Item "dist/trace2skill-gui.exe").Length / 1MB, 1)
           Write-Host "Built trace2skill-gui.exe ($size MB)"
 

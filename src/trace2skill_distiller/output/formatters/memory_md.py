@@ -139,6 +139,10 @@ def write_memory(
     skills: list[TopicSkill],
     output_dir: Path,
     project: str,
+    *,
+    agent_context_path: str = "",
+    user_profile_path: str = "",
+    repo_facts_path: str = "",
 ) -> Path:
     """Write a consolidated memory review file."""
     output_dir = Path(output_dir).expanduser()
@@ -147,7 +151,15 @@ def write_memory(
 
     now = datetime.now().isoformat(timespec="seconds")
     store = _merge_memory_store(load_memory_store(output_dir, project), skills, now)
-    return refresh_memory_files(output_dir, project, store, skills)
+    return refresh_memory_files(
+        output_dir,
+        project,
+        store,
+        skills,
+        agent_context_path=agent_context_path,
+        user_profile_path=user_profile_path,
+        repo_facts_path=repo_facts_path,
+    )
 
 
 def refresh_memory_files(
@@ -155,8 +167,19 @@ def refresh_memory_files(
     project: str,
     store: dict | None = None,
     skills: list[TopicSkill] | None = None,
+    *,
+    agent_context_path: str = "",
+    user_profile_path: str = "",
+    repo_facts_path: str = "",
 ) -> Path:
-    """Persist a memory store and regenerate all derived memory artifacts."""
+    """Persist a memory store and regenerate all derived memory artifacts.
+
+    The three derived .md files (agent-context / user-profile / repo-facts)
+    default to ``<output_dir>/<project>/<fixed name>``. If a custom path is
+    provided and points to an *already existing* file, the newly distilled
+    memories are appended to it (preserving any pre-existing human-written
+    content) instead of overwriting it.
+    """
     output_dir = Path(output_dir).expanduser()
     project_dir = output_dir / project
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -165,9 +188,9 @@ def refresh_memory_files(
     if not store.get("updated_at"):
         store["updated_at"] = datetime.now().isoformat(timespec="seconds")
     _write_memory_store(output_dir, project, store)
-    _write_agent_context(project_dir, project, store)
-    _write_user_profile(project_dir, project, store)
-    _write_repo_facts(project_dir, project, store)
+    _write_agent_context(project_dir, project, store, agent_context_path)
+    _write_user_profile(project_dir, project, store, user_profile_path)
+    _write_repo_facts(project_dir, project, store, repo_facts_path)
 
     skills = skills or []
     today = (store.get("updated_at") or datetime.now().isoformat(timespec="seconds"))[:10]
@@ -298,8 +321,48 @@ def refresh_memory_files(
     return path
 
 
-def _write_agent_context(project_dir: Path, project: str, store: dict) -> Path:
+def _resolve_target(
+    custom_path: str,
+    project: str,
+    project_dir: Path,
+    default_name: str,
+) -> tuple[Path, bool]:
+    """Resolve where a derived .md file should land.
+
+    Returns ``(path, append_mode)``. ``append_mode`` is True only when the user
+    configured a custom path that already exists on disk — in that case we
+    append fresh memories instead of overwriting the file.
+    """
+    if not custom_path or not str(custom_path).strip():
+        return project_dir / default_name, False
+    expanded = Path(custom_path.replace("{project}", project or "general")).expanduser()
+    exists = expanded.exists()
+    expanded.parent.mkdir(parents=True, exist_ok=True)
+    return expanded, exists
+
+
+def _fresh_items(store: dict) -> list[dict]:
+    """Return store items whose last_seen matches this run's updated_at.
+
+    These are the items newly added or refreshed in the current pass, i.e. the
+    only items worth appending when writing into a pre-existing user file.
+    """
+    updated_at = store.get("updated_at", "")
+    return [
+        item for item in store.get("items", [])
+        if item.get("last_seen") == updated_at
+        and item.get("status", "active") != "archived"
+    ]
+
+
+def _write_agent_context(
+    project_dir: Path,
+    project: str,
+    store: dict,
+    custom_path: str = "",
+) -> Path:
     """Write compact, high-confidence memory for direct agent context injection."""
+    path, append_mode = _resolve_target(custom_path, project, project_dir, AGENT_CONTEXT_FILENAME)
     items = _agent_ready_items(store)
     lines = [
         f"# Agent Context - {project}",
@@ -333,13 +396,35 @@ def _write_agent_context(project_dir: Path, project: str, store: dict) -> Path:
                 lines.append(f"- {prefix}{item.get('action', '')}")
             lines.append("")
 
-    path = project_dir / AGENT_CONTEXT_FILENAME
-    path.write_text("\n".join(lines), encoding="utf-8")
+    _emit(path, lines, append_mode, project)
     return path
 
 
-def _write_user_profile(project_dir: Path, project: str, store: dict) -> Path:
+def _emit(path: Path, lines: list[str], append_mode: bool, project: str) -> None:
+    """Write or append the rendered markdown to ``path``.
+
+    In append mode, the new content is written under a dated section header so
+    repeated runs accumulate without clobbering whatever the user previously
+    kept in that file.
+    """
+    body = "\n".join(lines).rstrip() + "\n"
+    if not append_mode:
+        path.write_text(body, encoding="utf-8")
+        return
+    today = datetime.now().strftime("%Y-%m-%d")
+    header = f"\n\n---\n\n## Appended from {project} ({today})\n\n"
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(header + body)
+
+
+def _write_user_profile(
+    project_dir: Path,
+    project: str,
+    store: dict,
+    custom_path: str = "",
+) -> Path:
     """Write stable user-specific memories separately."""
+    path, append_mode = _resolve_target(custom_path, project, project_dir, USER_PROFILE_FILENAME)
     items = [
         item for item in _agent_ready_items(store)
         if item.get("type") in {"USER_PREFERENCE", "STANDING_REQUIREMENT"}
@@ -355,12 +440,16 @@ def _write_user_profile(project_dir: Path, project: str, store: dict) -> Path:
     else:
         for item in items:
             lines.append(f"- **{MEMORY_TYPE_LABELS[item['type']]}**: {item.get('action', '')}")
-    path = project_dir / USER_PROFILE_FILENAME
-    path.write_text("\n".join(lines), encoding="utf-8")
+    _emit(path, lines, append_mode, project)
     return path
 
 
-def _write_repo_facts(project_dir: Path, project: str, store: dict) -> Path:
+def _write_repo_facts(
+    project_dir: Path,
+    project: str,
+    store: dict,
+    custom_path: str = "",
+) -> Path:
     """Write repository and workflow memories separately."""
     repo_types = {
         "REPO_FACT",
@@ -370,6 +459,7 @@ def _write_repo_facts(project_dir: Path, project: str, store: dict) -> Path:
         "PITFALL",
     }
     items = [item for item in _agent_ready_items(store) if item.get("type") in repo_types]
+    path, append_mode = _resolve_target(custom_path, project, project_dir, REPO_FACTS_FILENAME)
     lines = [
         f"# Repository Memory - {project}",
         "",
@@ -388,8 +478,7 @@ def _write_repo_facts(project_dir: Path, project: str, store: dict) -> Path:
             for item in typed:
                 lines.append(f"- {item.get('action', '')}")
             lines.append("")
-    path = project_dir / REPO_FACTS_FILENAME
-    path.write_text("\n".join(lines), encoding="utf-8")
+    _emit(path, lines, append_mode, project)
     return path
 
 

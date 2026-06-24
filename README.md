@@ -4,21 +4,30 @@
 
 ## 免安装 GUI 版（推荐普通用户）
 
-面向普通用户的推荐形态是 `trace2skill-gui.exe`：双击后启动本地 Web GUI，在浏览器里选择历史 Agent 会话并提取长期记忆，**不要求安装 Python 或运行任何命令**。
+面向普通用户的推荐形态是 `trace2skill-gui.exe`：双击后打开原生桌面窗口，在界面里选择历史 Agent 会话并提取长期记忆，**不要求安装 Python 或运行任何命令，也不依赖浏览器**。
 
 ### 下载使用
 
 1. 打开 [GitHub Releases](https://github.com/Tudou77826/trace2skill_distiller/releases) 页面
 2. 在最新版本的 Assets 里下载 **`trace2skill-gui.exe`**
-3. 双击运行，浏览器会自动打开本地界面（默认 `http://127.0.0.1:8765`）
+3. 双击运行，会弹出原生桌面窗口
 4. 在界面里勾选有价值的会话，点击「提取所选会话」即可生成长期记忆
 
 > 首次使用前，需要先准备好 `~/.trace2skill/config.yaml` 和 `.env`（API Key、模型等）。如果还没配置，可以让有经验的用户先通过下面的命令行版本跑一次 `trace2skill init`。
 
+### 同一个 exe 也支持命令行
+
+`trace2skill-gui.exe` 是双用途的：双击（无参数）打开窗口；带参数则走 CLI，例如：
+
+```bash
+trace2skill-gui.exe dream --project myproject
+trace2skill-gui.exe --help
+```
+
 ### 开发者本地构建
 
 ```bash
-uv run python build_exe.py --gui      # 构建免安装 GUI 版（one-file exe）
+uv run python build_exe.py --gui      # 构建原生 GUI 版（one-file exe，含 PySide6）
 uv run python build_exe.py --cli      # 构建高级命令行版本（onedir）
 uv run python build_exe.py --all      # 两者都构建
 ```
@@ -26,7 +35,7 @@ uv run python build_exe.py --all      # 两者都构建
 构建产物：
 
 ```text
-dist/trace2skill-gui.exe       # GUI 版（单文件，双击即用）
+dist/trace2skill-gui.exe       # GUI 版（单文件，双击开窗，带参走 CLI）
 dist/trace2skill/trace2skill.exe   # CLI 版（命令行，需要目录）
 ```
 
@@ -168,8 +177,7 @@ trace2skill init \
   --fast-model "gpt-4o-mini" \
   --strong-model "gpt-4o" \
   --fast-concurrency 4 \
-  --strong-concurrency 2 \
-  --output-format "skill_md"
+  --strong-concurrency 2
 
 # 可选：代理、超时等
 trace2skill init \
@@ -214,7 +222,6 @@ trace2skill
 ├── run
 │   ├── [--project <name> | --session <id>]
 │   ├── [--mode preprocess|analyze|full]
-│   ├── [--output skill|knowledge]
 │   └── [--preview]
 ├── runs
 │   ├── list
@@ -304,14 +311,14 @@ trace2skill config set source.type chrys
 trace2skill config set source.opencode.db_path "D:/data/opencode.db"
 trace2skill config set fast.max_concurrency 4
 trace2skill config set strong.max_concurrency 2
-trace2skill config set output.format knowledge
+trace2skill config set output.agent_context_path ~/notes/my-context.md
 trace2skill config set filter.min_messages 8
 
 # 用编辑器直接修改配置文件
 trace2skill config edit
 ```
 
-CLI 默认始终使用配置里的当前 source、模型级并发限制和输出格式；运行时不会跨多种 coding 软件遍历。同名 `project` 只在当前 source 范围内解释。
+CLI 默认始终使用配置里的当前 source、模型级并发限制和输出路径；运行时不会跨多种 coding 软件遍历。同名 `project` 只在当前 source 范围内解释。
 
 并发现在只由模型配置控制：
 
@@ -404,9 +411,13 @@ scheduler:
   cron: "0 3 * * *"
 
 output:
-  format: "knowledge_md"
   skill_output_dir: "~/.trace2skill/skills"
   max_rules_per_skill: 15
+  # 可选：自定义三个派生 .md 文件的落地路径。留空=默认位置；
+  # 填写一个已存在的文件路径，则新记忆会追加进去（而非覆盖）。
+  agent_context_path: ""
+  user_profile_path: ""
+  repo_facts_path: ""
 
 clustering_max_topics: 8
 ```
@@ -467,8 +478,8 @@ src/trace2skill_distiller/
 ├── output/                          # 模块 4：结果输出
 │   ├── types.py                     # DistillReport, RunState, ShapingResult
 │   ├── formatters/
-│   │   ├── base.py                  # Protocol: SkillFormatter
-│   │   └── skill_md.py             # SKILL.md 格式 (YAML frontmatter)
+│   │   ├── memory_md.py             # memory 复审格式（agent-context / user-profile / repo-facts）
+│   │   └── trajectories.py          # 原始轨迹 JSON 落盘
 │   ├── presenters/
 │   │   ├── base.py                  # Protocol: ReportPresenter
 │   │   └── html_report.py          # HTML 报告

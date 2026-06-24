@@ -190,3 +190,68 @@ def test_memory_formatter_requires_evidence_or_confirmation_for_agent_context(tm
 
     memory_md = (tmp_path / "demo" / "memory.md").read_text(encoding="utf-8")
     assert "Add evidence or confirm manually" in memory_md
+
+
+def _skill_with_rule(action: str = "The user prefers concise summaries.") -> TopicSkill:
+    return TopicSkill(
+        topic_id="t1",
+        topic_name="T1",
+        skill_title="T1",
+        skill_type="memory",
+        description="d",
+        summary="s",
+        source_sessions=["s1"],
+        rules=[
+            SkillRule(
+                id="r1",
+                type="USER_PREFERENCE",
+                action=action,
+                evidence_from_success=["observed in session"],
+                confidence=0.9,
+                scope="user-specific",
+            )
+        ],
+    )
+
+
+def test_custom_path_creates_new_file_when_absent(tmp_path):
+    target = tmp_path / "notes" / "my-context.md"
+    write_memory(
+        [_skill_with_rule("The user prefers concise summaries.")],
+        tmp_path,
+        "demo",
+        agent_context_path=str(target),
+    )
+    assert target.exists()
+    text = target.read_text(encoding="utf-8")
+    assert "The user prefers concise summaries." in text
+    # Default-location file is NOT created when a custom path is set.
+    assert not (tmp_path / "demo" / "agent-context.md").exists()
+
+
+def test_custom_path_appends_to_existing_file(tmp_path):
+    target = tmp_path / "existing.md"
+    # A user-authored file already exists with its own content.
+    target.write_text("# My Notes\n\nPre-existing human-written content.\n", encoding="utf-8")
+
+    write_memory(
+        [_skill_with_rule("The user prefers concise summaries.")],
+        tmp_path,
+        "demo",
+        agent_context_path=str(target),
+    )
+
+    text = target.read_text(encoding="utf-8")
+    # Original content is preserved.
+    assert "Pre-existing human-written content." in text
+    # New memory is appended, not replacing the file.
+    assert "The user prefers concise summaries." in text
+    assert "Appended from demo" in text
+
+
+def test_empty_custom_path_uses_default_location(tmp_path):
+    write_memory([_skill_with_rule()], tmp_path, "demo")
+    # Default behaviour: agent-context.md under <dir>/<project>/.
+    default_path = tmp_path / "demo" / "agent-context.md"
+    assert default_path.exists()
+    assert "The user prefers concise summaries." in default_path.read_text(encoding="utf-8")

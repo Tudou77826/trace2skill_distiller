@@ -7,11 +7,13 @@ import os
 from unittest.mock import patch
 
 from trace2skill_distiller.core.config import DistillConfig, OutputConfig, load_dotenv
-from trace2skill_distiller.gui.server import (
-    _config_view,
-    _friendly_error,
-    _save_config,
+from trace2skill_distiller.gui.services import (
     _write_env,
+    config_view as _config_view,
+    friendly_error as _friendly_error,
+    run_status_payload as _run_status_payload,
+    save_config as _save_config,
+    update_memory_item as _update_memory_item,
     memory_snapshot,
     session_rows,
 )
@@ -31,12 +33,15 @@ class _GuiSource:
 
 def test_session_rows_are_sorted_and_count_tools():
     cfg = DistillConfig()
-    with patch("trace2skill_distiller.gui.server.create_source", return_value=_GuiSource()):
+    with patch("trace2skill_distiller.gui.services.create_source", return_value=_GuiSource()):
         rows = session_rows(cfg, project="demo", limit=10)
 
     assert [row["id"] for row in rows] == ["new", "old"]
     assert rows[1]["tools"] == 2
+    assert rows[1]["eligible"] is False
+    assert "工具少于" in rows[1]["hint"]
     assert rows[0]["title"] == "New work"
+    assert rows[0]["eligible"] is True
 
 
 def test_memory_snapshot_returns_quality_and_review_items(tmp_path):
@@ -73,7 +78,50 @@ def test_memory_snapshot_returns_quality_and_review_items(tmp_path):
     assert snapshot["quality"]["agent_ready"] == 1
     assert snapshot["quality"]["open_questions"] == 1
     assert snapshot["quality"]["label"] in {"需要复审", "记忆偏薄", "可用", "健康"}
+    assert "沉淀" in snapshot["summary"]
+    assert snapshot["learned_items"][0]["status"] in {"可直接使用", "需要确认"}
+    assert {group["id"] for group in snapshot["groups"]} == {"keep", "review", "discard"}
+    assert snapshot["learned_items"][0]["action"]
     assert snapshot["review_items"][0]["reason"] == "开放问题"
+
+
+def test_update_memory_item_confirm_and_archive(tmp_path):
+    cfg = DistillConfig(output=OutputConfig(skill_output_dir=str(tmp_path)))
+    project_dir = tmp_path / "demo"
+    project_dir.mkdir()
+    (project_dir / "memory_store.json").write_text(
+        json.dumps({
+            "version": 1,
+            "project": "demo",
+            "items": [
+                {
+                    "id": "review01",
+                    "type": "WORKFLOW_PATTERN",
+                    "action": "Ask what file to inspect first.",
+                    "confidence": 0.7,
+                    "status": "review",
+                    "evidence": ["User wanted clearer file workflow."],
+                },
+                {
+                    "id": "fact01",
+                    "type": "REPO_FACT",
+                    "action": "One-off file list.",
+                    "confidence": 0.6,
+                    "status": "active",
+                    "scope": "project-specific",
+                    "evidence": ["Listed once."],
+                },
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    confirmed = _update_memory_item(cfg, {"project": "demo", "id": "review01", "action": "confirm"})
+    confirmed_item = next(item for group in confirmed["groups"] for item in group["items"] if item["id"] == "review01")
+    assert confirmed_item["ai_use"] == "已确认，可进入长期上下文"
+
+    archived = _update_memory_item(cfg, {"project": "demo", "id": "fact01", "action": "archive"})
+    assert all(item["id"] != "fact01" for group in archived["groups"] for item in group["items"])
 
 
 def test_config_view_masks_secrets(tmp_path):
@@ -86,7 +134,10 @@ def test_config_view_masks_secrets(tmp_path):
     assert view["fast"]["api_key_set"] is True
     assert "api_key" not in view["fast"]
     assert view["source"]["type"] == cfg.source.type
-    assert view["output"]["format"] == cfg.output.format
+    assert view["output"]["skill_output_dir"] == cfg.output.skill_output_dir
+    assert "agent_context_path" in view["output"]
+    assert "user_profile_path" in view["output"]
+    assert "repo_facts_path" in view["output"]
 
 
 def test_load_dotenv_only_loads_prefixed_vars(tmp_path, monkeypatch):
@@ -126,8 +177,10 @@ def test_save_config_writes_yaml_and_env(tmp_path, monkeypatch):
         "strong_max_concurrency": 2,
         "source_type": "claudecode",
         "source_location": "~/.claude/projects",
-        "output_format": "memory_md",
         "output_skill_output_dir": "~/.trace2skill/skills",
+        "output_agent_context_path": "",
+        "output_user_profile_path": "",
+        "output_repo_facts_path": "",
         "filter_min_messages": 5,
         "filter_min_tools": 3,
         "fast_proxy": "",
@@ -152,3 +205,40 @@ def test_friendly_error_maps_common_failures():
     assert "Base URL" in _friendly_error(RuntimeError("connection timeout"))
     assert "筛选" in _friendly_error(RuntimeError("no sessions passed filter"))
     assert "提取失败" in _friendly_error(ValueError("something else"))
+
+
+class _Report:
+    def __init__(self, sessions: int, topics: int, rules: int):
+        self.sessions_passed_filter = sessions
+        self.topics_found = topics
+        self.total_rules = rules
+
+
+def test_run_status_payload_distinguishes_empty_results():
+    no_candidates = _run_status_payload(_Report(sessions=0, topics=0, rules=0))
+    assert no_candidates["status"] == "no_candidates"
+    assert "没有生成结果" in no_candidates["message"]
+    assert "筛选" in no_candidates["action"]
+
+    no_rules = _run_status_payload(_Report(sessions=1, topics=0, rules=0))
+    assert no_rules["status"] == "no_rules"
+    assert "没有生成记忆" in no_rules["message"]
+
+    ok = _run_status_payload(_Report(sessions=2, topics=1, rules=3))
+    assert ok["status"] == "ok"
+    assert "提取完成" in ok["message"]
+
+
+def test_gui_extract_decision_copy_matches_legacy_text():
+    # The decision-button copy that drove the old HTML now lives in qt_app;
+    # keep the user-facing wording stable across the rewrite.
+    from trace2skill_distiller.gui.qt_app import _DECISION_COPY
+
+    assert _DECISION_COPY["confirm"]["label"] == "保存到记忆文件"
+    assert _DECISION_COPY["confirm"]["effect"] == "写入 {target}，后续 AI 会按这条记忆工作。"
+    assert _DECISION_COPY["review"]["label"] == "放入待确认"
+    assert _DECISION_COPY["review"]["effect"] == "留在待确认区，暂不写入 {target}。"
+    assert _DECISION_COPY["archive"]["label"] == "不保存"
+    assert _DECISION_COPY["archive"]["effect"] == "从有效记忆里移除，不写入 {target}。"
+    # {target} interpolates to the agent-context filename.
+    assert "后续 AI" in _DECISION_COPY["confirm"]["done"].format(target="agent-context.md")

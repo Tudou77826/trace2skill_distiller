@@ -22,7 +22,7 @@ from ..analysis.analysis_facade import AnalysisLayer, DefaultAnalysisLayer
 from ..analysis.clustering.semantic import SemanticClusterStrategy
 from ..analysis.distillation.llm_distill import LLMDistillationStrategy
 from ..output.output_facade import OutputLayer, DefaultOutputLayer
-from ..output.formatters.skill_md import SkillMdFormatter, save_trajectories
+from ..output.formatters.trajectories import save_trajectories
 from ..output.presenters.html_report import HtmlReportPresenter
 from ..output.state import StateManager
 from ..output.types import (
@@ -380,13 +380,7 @@ class DistillPipeline:
         )
 
         # Build output layer
-        output = DefaultOutputLayer(
-            formatter=SkillMdFormatter(
-                merge_llm=fast_llm,
-                max_rules=config.output.max_rules_per_skill,
-            ),
-            config=config.output,
-        )
+        output = DefaultOutputLayer(config=config.output)
 
         return cls(mining, analysis, output, fast_llm, strong_llm, config)
 
